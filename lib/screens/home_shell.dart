@@ -1,26 +1,35 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:cpf_mobile/screens/elections_screen.dart';
 import 'package:cpf_mobile/screens/events_screen.dart';
+import 'package:cpf_mobile/screens/messenger_gc_checklist_screen.dart';
+import 'package:cpf_mobile/screens/payments_screen.dart';
 import 'package:cpf_mobile/screens/peer_dashboard_screen.dart';
+import 'package:cpf_mobile/services/elections_service.dart';
 import 'package:cpf_mobile/services/events_service.dart';
+import 'package:cpf_mobile/services/membership_payment_service.dart';
 import 'package:cpf_mobile/services/secure_storage_service.dart';
 import 'package:cpf_mobile/state/auth_controller.dart';
 import 'package:cpf_mobile/theme/cpf_themes.dart';
 import 'package:cpf_mobile/widgets/cpf_emblem.dart';
 import 'package:cpf_mobile/widgets/theme_switcher_button.dart';
 
-/// Authenticated 2-tab shell (Peer Dashboard & Campus Events).
-/// Awards and Intercampus are intentionally omitted for Wave 1.
+/// Authenticated 4-tab shell (Dashboard, Events, Dues, Elections).
+/// Awards and Intercampus remain strictly omitted.
 class HomeShell extends StatefulWidget {
   const HomeShell({
     super.key,
     required this.authController,
     required this.eventsService,
+    required this.paymentService,
+    required this.electionsService,
     required this.storage,
     required this.themeController,
   });
 
   final AuthController authController;
   final EventsService eventsService;
+  final MembershipPaymentService paymentService;
+  final ElectionsService electionsService;
   final SecureStorageService storage;
   final ThemeController themeController;
 
@@ -64,6 +73,25 @@ class _HomeShellState extends State<HomeShell> {
     }
   }
 
+  void _openGcChecklist() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => MessengerGcChecklistScreen(
+          service: widget.paymentService,
+          baseUrl: widget.authController.apiConfig.baseUrl,
+        ),
+      ),
+    );
+  }
+
+  String _titleForTab(String campusCode) => switch (_selectedIndex) {
+        0 => 'Peer Dashboard • $campusCode',
+        1 => 'Events & Activities',
+        2 => 'Dues & Payments',
+        3 => 'Campus Elections',
+        _ => 'CPF Mobile',
+      };
+
   @override
   Widget build(BuildContext context) {
     final p = context.cpf;
@@ -71,7 +99,35 @@ class _HomeShellState extends State<HomeShell> {
     return ListenableBuilder(
       listenable: widget.authController,
       builder: (context, _) {
-        final campusCode = widget.authController.profile?.campus?.code ?? 'CPF';
+        final campusCode =
+            widget.authController.profile?.campus?.code ?? 'CPF';
+
+        final tabs = <Widget>[
+          PeerDashboardScreen(
+            key: const ValueKey<String>('tab_dashboard'),
+            authController: widget.authController,
+            onOpenEvents: () => setState(() => _selectedIndex = 1),
+            onOpenPayments: () => setState(() => _selectedIndex = 2),
+            onOpenElections: () => setState(() => _selectedIndex = 3),
+            onOpenGcChecklist: _openGcChecklist,
+          ),
+          EventsScreen(
+            key: const ValueKey<String>('tab_events'),
+            authController: widget.authController,
+            eventsService: widget.eventsService,
+            storage: widget.storage,
+          ),
+          PaymentsScreen(
+            key: const ValueKey<String>('tab_payments'),
+            authController: widget.authController,
+            paymentService: widget.paymentService,
+          ),
+          ElectionsScreen(
+            key: const ValueKey<String>('tab_elections'),
+            authController: widget.authController,
+            electionsService: widget.electionsService,
+          ),
+        ];
 
         return Scaffold(
           backgroundColor: p.bg,
@@ -82,9 +138,7 @@ class _HomeShellState extends State<HomeShell> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    _selectedIndex == 0
-                        ? 'Peer Dashboard • $campusCode'
-                        : 'Events & Activities',
+                    _titleForTab(campusCode),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -115,19 +169,11 @@ class _HomeShellState extends State<HomeShell> {
               ),
             ],
           ),
-          body: IndexedStack(
-            index: _selectedIndex,
-            children: [
-              PeerDashboardScreen(
-                authController: widget.authController,
-                onOpenEvents: () => setState(() => _selectedIndex = 1),
-              ),
-              EventsScreen(
-                authController: widget.authController,
-                eventsService: widget.eventsService,
-                storage: widget.storage,
-              ),
-            ],
+          body: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            child: tabs[_selectedIndex],
           ),
           bottomNavigationBar: NavigationBar(
             selectedIndex: _selectedIndex,
@@ -143,6 +189,16 @@ class _HomeShellState extends State<HomeShell> {
                 icon: Icon(Icons.event_note_outlined),
                 selectedIcon: Icon(Icons.event_note_rounded),
                 label: 'Events',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.payments_outlined),
+                selectedIcon: Icon(Icons.payments_rounded),
+                label: 'Dues',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.how_to_vote_outlined),
+                selectedIcon: Icon(Icons.how_to_vote_rounded),
+                label: 'Elections',
               ),
             ],
           ),

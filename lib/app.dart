@@ -4,7 +4,10 @@ import 'package:cpf_mobile/screens/home_shell.dart';
 import 'package:cpf_mobile/screens/landing_login_screen.dart';
 import 'package:cpf_mobile/services/api_client.dart';
 import 'package:cpf_mobile/services/auth_service.dart';
+import 'package:cpf_mobile/services/elections_service.dart';
 import 'package:cpf_mobile/services/events_service.dart';
+import 'package:cpf_mobile/services/local_db_service.dart';
+import 'package:cpf_mobile/services/membership_payment_service.dart';
 import 'package:cpf_mobile/services/secure_storage_service.dart';
 import 'package:cpf_mobile/state/auth_controller.dart';
 import 'package:cpf_mobile/theme/cpf_themes.dart';
@@ -23,10 +26,13 @@ class CpfApp extends StatefulWidget {
 class _CpfAppState extends State<CpfApp> {
   late final ApiConfig _apiConfig;
   late final SecureStorageService _storage;
+  late final LocalDbService _localDb;
   late final ThemeController _themeController;
   late final ApiClient _apiClient;
   late final AuthService _authService;
   late final EventsService _eventsService;
+  late final MembershipPaymentService _paymentService;
+  late final ElectionsService _electionsService;
   late final AuthController _authController;
 
   @override
@@ -34,6 +40,7 @@ class _CpfAppState extends State<CpfApp> {
     super.initState();
     _apiConfig = ApiConfig();
     _storage = const SecureStorageService();
+    _localDb = LocalDbService();
     _themeController = ThemeController();
 
     late final AuthController controller;
@@ -44,11 +51,14 @@ class _CpfAppState extends State<CpfApp> {
     );
     _authService = AuthService(_apiClient);
     _eventsService = EventsService(_apiClient);
+    _paymentService = MembershipPaymentService(_apiClient);
+    _electionsService = ElectionsService(_apiClient);
     controller = AuthController(
       apiConfig: _apiConfig,
       storage: _storage,
       apiClient: _apiClient,
       authService: _authService,
+      localDb: _localDb,
     );
     _authController = controller;
 
@@ -81,6 +91,8 @@ class _CpfAppState extends State<CpfApp> {
                   ? HomeShell(
                       authController: _authController,
                       eventsService: _eventsService,
+                      paymentService: _paymentService,
+                      electionsService: _electionsService,
                       storage: _storage,
                       themeController: _themeController,
                     )

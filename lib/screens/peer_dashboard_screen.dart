@@ -4,21 +4,29 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:cpf_mobile/models/auth_profile.dart';
 import 'package:cpf_mobile/state/auth_controller.dart';
 import 'package:cpf_mobile/theme/cpf_themes.dart';
+import 'package:cpf_mobile/widgets/animated_entrance.dart';
 import 'package:cpf_mobile/widgets/cpf_emblem.dart';
 import 'package:cpf_mobile/widgets/data_privacy_modal.dart';
 
 /// Screen 2: QR-First Peer Dashboard displaying the member's official QR
 /// strictly inside a pure white (`#FFFFFF`) quiet-zone box with dark
-/// (`#0F172A`) modules across all 5 themes, daily quote, and quick links.
+/// (`#0F172A`) modules across all 5 themes (including offline via SQLite),
+/// daily quote, and quick links.
 class PeerDashboardScreen extends StatelessWidget {
   const PeerDashboardScreen({
     super.key,
     required this.authController,
     required this.onOpenEvents,
+    this.onOpenPayments,
+    this.onOpenElections,
+    this.onOpenGcChecklist,
   });
 
   final AuthController authController;
   final VoidCallback onOpenEvents;
+  final VoidCallback? onOpenPayments;
+  final VoidCallback? onOpenElections;
+  final VoidCallback? onOpenGcChecklist;
 
   Future<void> _handleRefresh(BuildContext context) async {
     final err = await authController.refreshProfile();
@@ -49,7 +57,7 @@ class PeerDashboardScreen extends StatelessWidget {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(24),
           ),
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.all(22),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -73,28 +81,30 @@ class PeerDashboardScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 16),
-                // Strictly pure white quiet-zone box across ALL 5 themes.
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: CpfPalette.qrQuietZoneBackground,
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: p.border),
-                  ),
-                  child: QrImageView(
-                    data: payload,
-                    size: 230,
-                    backgroundColor: CpfPalette.qrQuietZoneBackground,
-                    errorCorrectionLevel: QrErrorCorrectLevel.M,
-                    gapless: true,
-                    padding: EdgeInsets.zero,
-                    eyeStyle: const QrEyeStyle(
-                      eyeShape: QrEyeShape.square,
-                      color: CpfPalette.qrModuleColor,
+                Hero(
+                  tag: 'cpf_peer_qr_pass',
+                  child: Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: CpfPalette.qrQuietZoneBackground,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: p.border),
                     ),
-                    dataModuleStyle: const QrDataModuleStyle(
-                      dataModuleShape: QrDataModuleShape.square,
-                      color: CpfPalette.qrModuleColor,
+                    child: QrImageView(
+                      data: payload,
+                      size: 220,
+                      backgroundColor: CpfPalette.qrQuietZoneBackground,
+                      errorCorrectionLevel: QrErrorCorrectLevel.M,
+                      gapless: true,
+                      padding: EdgeInsets.zero,
+                      eyeStyle: const QrEyeStyle(
+                        eyeShape: QrEyeShape.square,
+                        color: CpfPalette.qrModuleColor,
+                      ),
+                      dataModuleStyle: const QrDataModuleStyle(
+                        dataModuleShape: QrDataModuleShape.square,
+                        color: CpfPalette.qrModuleColor,
+                      ),
                     ),
                   ),
                 ),
@@ -132,6 +142,7 @@ class PeerDashboardScreen extends StatelessWidget {
 
     showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) {
         final p = sheetContext.cpf;
@@ -143,7 +154,7 @@ class PeerDashboardScreen extends StatelessWidget {
           ),
           child: SafeArea(
             top: false,
-            child: Padding(
+            child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(20, 14, 20, 22),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -232,7 +243,11 @@ class PeerDashboardScreen extends StatelessWidget {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
         children: [
-          _buildWelcomeHeader(p, profile, roleColor),
+          FadeSlideIn(child: _buildWelcomeHeader(p, profile, roleColor)),
+          if (authController.isOfflineCached) ...[
+            const SizedBox(height: 10),
+            _buildOfflineBanner(p),
+          ],
           if (profile.user.mustChangePassword ||
               profile.isAlumni ||
               !profile.qrUnlocked) ...[
@@ -240,10 +255,10 @@ class PeerDashboardScreen extends StatelessWidget {
             _buildStatusAlert(p, profile),
           ],
           const SizedBox(height: 14),
-          _buildQrCard(context, p, profile),
+          FadeSlideIn(child: _buildQrCard(context, p, profile)),
           if (profile.dailyQuote != null) ...[
             const SizedBox(height: 14),
-            _buildQuoteCard(p, profile.dailyQuote!),
+            FadeSlideIn(child: _buildQuoteCard(p, profile.dailyQuote!)),
           ],
           const SizedBox(height: 18),
           Text(
@@ -256,6 +271,33 @@ class PeerDashboardScreen extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           _buildQuickLinks(context, p, profile),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOfflineBanner(CpfPalette p) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: p.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: p.primary.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.offline_pin_rounded, size: 19, color: p.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Offline Mode • Showing locally cached SQLite Peer QR Pass.',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: p.text,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -286,6 +328,8 @@ class PeerDashboardScreen extends StatelessWidget {
               children: [
                 Text(
                   profile.displayName,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w800,
@@ -392,189 +436,201 @@ class PeerDashboardScreen extends StatelessWidget {
         profile.qrPayload!.isNotEmpty;
     final courseSection = profile.membership?.courseYearSection;
 
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: p.heroCard,
-        borderRadius: BorderRadius.circular(24),
-        border: p.themeId.isDark ? Border.all(color: p.border) : null,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: p.themeId.isDark ? 0.32 : 0.15),
-            blurRadius: 18,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Text(
-                'OFFICIAL PEER QR ID',
-                style: TextStyle(
-                  color: p.heroMuted,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.0,
-                ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final qrSize =
+            (constraints.maxWidth - 88).clamp(140.0, 196.0);
+
+        return Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: p.heroCard,
+            borderRadius: BorderRadius.circular(24),
+            border: p.themeId.isDark ? Border.all(color: p.border) : null,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black
+                    .withValues(alpha: p.themeId.isDark ? 0.32 : 0.15),
+                blurRadius: 18,
+                offset: const Offset(0, 10),
               ),
-              const Spacer(),
-              if (profile.campus != null)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: p.primary.withValues(alpha: 0.25),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    profile.campus!.code,
-                    style: TextStyle(
-                      color: p.heroText,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
             ],
           ),
-          const SizedBox(height: 18),
-          // Strictly pure white quiet-zone box with dark #0F172A modules across ALL 5 themes.
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: CpfPalette.qrQuietZoneBackground,
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: hasQr
-                ? QrImageView(
-                    data: profile.qrPayload!,
-                    size: 196,
-                    backgroundColor: CpfPalette.qrQuietZoneBackground,
-                    errorCorrectionLevel: QrErrorCorrectLevel.M,
-                    gapless: true,
-                    padding: EdgeInsets.zero,
-                    eyeStyle: const QrEyeStyle(
-                      eyeShape: QrEyeShape.square,
-                      color: CpfPalette.qrModuleColor,
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'OFFICIAL PEER QR ID',
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: p.heroMuted,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.0,
+                      ),
                     ),
-                    dataModuleStyle: const QrDataModuleStyle(
-                      dataModuleShape: QrDataModuleShape.square,
-                      color: CpfPalette.qrModuleColor,
-                    ),
-                  )
-                : const SizedBox(
-                    width: 196,
-                    height: 196,
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.lock_outline_rounded,
-                          size: 46,
-                          color: Color(0xFF475569),
+                  ),
+                  if (profile.campus != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: p.primary.withValues(alpha: 0.25),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        profile.campus!.code,
+                        style: TextStyle(
+                          color: p.heroText,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
                         ),
-                        SizedBox(height: 10),
-                        Text(
-                          'QR Locked',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              // Strictly pure white quiet-zone box with dark #0F172A modules across ALL 5 themes.
+              Hero(
+                tag: 'cpf_peer_qr_pass',
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: CpfPalette.qrQuietZoneBackground,
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: hasQr
+                      ? QrImageView(
+                          data: profile.qrPayload!,
+                          size: qrSize,
+                          backgroundColor: CpfPalette.qrQuietZoneBackground,
+                          errorCorrectionLevel: QrErrorCorrectLevel.M,
+                          gapless: true,
+                          padding: EdgeInsets.zero,
+                          eyeStyle: const QrEyeStyle(
+                            eyeShape: QrEyeShape.square,
                             color: CpfPalette.qrModuleColor,
                           ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          'Available once verified',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFF475569),
+                          dataModuleStyle: const QrDataModuleStyle(
+                            dataModuleShape: QrDataModuleShape.square,
+                            color: CpfPalette.qrModuleColor,
                           ),
+                        )
+                      : SizedBox(
+                          width: qrSize,
+                          height: qrSize,
+                          child: const Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.lock_outline_rounded,
+                                size: 46,
+                                color: Color(0xFF475569),
+                              ),
+                              SizedBox(height: 10),
+                              Text(
+                                'QR Locked',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                  color: CpfPalette.qrModuleColor,
+                                ),
+                              ),
+                              SizedBox(height: 4),
+                              Text(
+                                'Available once verified',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF475569),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (profile.memberIdCode != null &&
+                  profile.memberIdCode!.isNotEmpty) ...[
+                InkWell(
+                  onTap: () => _copyMemberId(context, profile.memberIdCode!),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: p.heroCardElevated,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            profile.memberIdCode!,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: p.heroText,
+                              fontFamily: 'monospace',
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.6,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Icon(
+                          Icons.copy_rounded,
+                          size: 15,
+                          color: p.accent,
                         ),
                       ],
                     ),
                   ),
-          ),
-          const SizedBox(height: 16),
-          if (profile.memberIdCode != null &&
-              profile.memberIdCode!.isNotEmpty) ...[
-            InkWell(
-              onTap: () => _copyMemberId(context, profile.memberIdCode!),
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 8,
                 ),
-                decoration: BoxDecoration(
-                  color: p.heroCardElevated,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
+                const SizedBox(height: 10),
+              ],
+              Wrap(
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                children: [
+                  if (courseSection != null && courseSection.isNotEmpty)
                     Text(
-                      profile.memberIdCode!,
+                      courseSection,
                       style: TextStyle(
-                        color: p.heroText,
-                        fontFamily: 'monospace',
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.6,
+                        color: p.heroMuted,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Icon(
-                      Icons.copy_rounded,
-                      size: 15,
-                      color: p.accent,
+                  if (hasQr)
+                    TextButton.icon(
+                      onPressed: () => _showExpandedQr(context, profile),
+                      style: TextButton.styleFrom(
+                        foregroundColor: p.accent,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 32),
+                      ),
+                      icon: const Icon(Icons.fullscreen_rounded, size: 18),
+                      label: const Text(
+                        'Expand QR',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
                     ),
-                  ],
-                ),
+                ],
               ),
-            ),
-            const SizedBox(height: 10),
-          ],
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (courseSection != null && courseSection.isNotEmpty)
-                Text(
-                  courseSection,
-                  style: TextStyle(
-                    color: p.heroMuted,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              if (hasQr) ...[
-                if (courseSection != null && courseSection.isNotEmpty)
-                  Text(
-                    '  •  ',
-                    style: TextStyle(color: p.heroMuted),
-                  ),
-                TextButton.icon(
-                  onPressed: () => _showExpandedQr(context, profile),
-                  style: TextButton.styleFrom(
-                    foregroundColor: p.accent,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    minimumSize: const Size(0, 32),
-                  ),
-                  icon: const Icon(Icons.fullscreen_rounded, size: 18),
-                  label: const Text(
-                    'Expand QR',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ],
             ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -597,15 +653,17 @@ class PeerDashboardScreen extends StatelessWidget {
                 size: 22,
               ),
               const SizedBox(width: 6),
-              Text(
-                'Daily Peer Quote',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  color: p.text,
+              Expanded(
+                child: Text(
+                  'Daily Peer Quote',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: p.text,
+                  ),
                 ),
               ),
-              const Spacer(),
               if (quote.moodTag != null && quote.moodTag!.isNotEmpty)
                 Container(
                   padding: const EdgeInsets.symmetric(
@@ -673,6 +731,36 @@ class PeerDashboardScreen extends StatelessWidget {
             title: 'Officer QR Attendance Scanner',
             subtitle: 'Check-In / Check-Out peers on active campus events',
             onTap: onOpenEvents,
+          ),
+        ],
+        if (profile.isOfficerOrAdviser && onOpenGcChecklist != null) ...[
+          const SizedBox(height: 10),
+          _QuickLinkTile(
+            icon: Icons.checklist_rtl_rounded,
+            accent: p.primary,
+            title: 'Messenger GC A–Z Checklist',
+            subtitle: '1-tap Messenger GC confirmation across A–Z roster',
+            onTap: onOpenGcChecklist!,
+          ),
+        ],
+        if (onOpenPayments != null) ...[
+          const SizedBox(height: 10),
+          _QuickLinkTile(
+            icon: Icons.payments_outlined,
+            accent: p.accent,
+            title: 'Dues & Payments',
+            subtitle: 'Submit payment references or validate chapter receipts',
+            onTap: onOpenPayments!,
+          ),
+        ],
+        if (onOpenElections != null) ...[
+          const SizedBox(height: 10),
+          _QuickLinkTile(
+            icon: Icons.how_to_vote_outlined,
+            accent: p.success,
+            title: 'Campus Elections',
+            subtitle: 'Floor voting cards and ephemeral session chat',
+            onTap: onOpenElections!,
           ),
         ],
         const SizedBox(height: 10),
