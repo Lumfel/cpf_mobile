@@ -13,8 +13,10 @@ import 'package:cpf_mobile/theme/cpf_themes.dart';
 import 'package:cpf_mobile/widgets/cpf_emblem.dart';
 import 'package:cpf_mobile/widgets/theme_switcher_button.dart';
 
-/// Authenticated 4-tab shell (Dashboard, Events, Dues, Elections).
-/// Awards and Intercampus remain strictly omitted.
+/// Authenticated shell.
+/// - Student members, officers, and Club Adviser: 4-tab shell (Dashboard, Events, Dues, Elections).
+/// - Non-Adviser Guidance Counselors (Rule 2): Coordination-only view with all
+///   club-affair tabs and actions (Events, Dues/Payments, Elections, Messenger GC) hidden.
 class HomeShell extends StatefulWidget {
   const HomeShell({
     super.key,
@@ -74,6 +76,9 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   void _openGcChecklist() {
+    if (widget.authController.profile?.isGuidanceCounselorOnly == true) {
+      return;
+    }
     Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => MessengerGcChecklistScreen(
@@ -84,13 +89,18 @@ class _HomeShellState extends State<HomeShell> {
     );
   }
 
-  String _titleForTab(String campusCode) => switch (_selectedIndex) {
-        0 => 'Peer Dashboard • $campusCode',
-        1 => 'Events & Activities',
-        2 => 'Dues & Payments',
-        3 => 'Campus Elections',
-        _ => 'CPF Mobile',
-      };
+  String _titleForTab(String campusCode, bool isCounselorOnly) {
+    if (isCounselorOnly) {
+      return 'Counselor Coordination • $campusCode';
+    }
+    return switch (_selectedIndex) {
+      0 => 'Peer Dashboard • $campusCode',
+      1 => 'Events & Activities',
+      2 => 'Dues & Payments',
+      3 => 'Campus Elections',
+      _ => 'CPF Mobile',
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -99,8 +109,9 @@ class _HomeShellState extends State<HomeShell> {
     return ListenableBuilder(
       listenable: widget.authController,
       builder: (context, _) {
-        final campusCode =
-            widget.authController.profile?.campus?.code ?? 'CPF';
+        final profile = widget.authController.profile;
+        final campusCode = profile?.campus?.code ?? 'CPF';
+        final isCounselorOnly = profile?.isGuidanceCounselorOnly ?? false;
 
         final tabs = <Widget>[
           PeerDashboardScreen(
@@ -129,6 +140,14 @@ class _HomeShellState extends State<HomeShell> {
           ),
         ];
 
+        final activeBody = isCounselorOnly
+            ? PeerDashboardScreen(
+                key: const ValueKey<String>('tab_counselor_dashboard'),
+                authController: widget.authController,
+                onOpenEvents: () {},
+              )
+            : tabs[_selectedIndex];
+
         return Scaffold(
           backgroundColor: p.bg,
           appBar: AppBar(
@@ -138,7 +157,7 @@ class _HomeShellState extends State<HomeShell> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    _titleForTab(campusCode),
+                    _titleForTab(campusCode, isCounselorOnly),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -173,35 +192,37 @@ class _HomeShellState extends State<HomeShell> {
             duration: const Duration(milliseconds: 220),
             switchInCurve: Curves.easeOutCubic,
             switchOutCurve: Curves.easeInCubic,
-            child: tabs[_selectedIndex],
+            child: activeBody,
           ),
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: _selectedIndex,
-            onDestinationSelected: (index) =>
-                setState(() => _selectedIndex = index),
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.qr_code_2_outlined),
-                selectedIcon: Icon(Icons.qr_code_2_rounded),
-                label: 'Dashboard',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.event_note_outlined),
-                selectedIcon: Icon(Icons.event_note_rounded),
-                label: 'Events',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.payments_outlined),
-                selectedIcon: Icon(Icons.payments_rounded),
-                label: 'Dues',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.how_to_vote_outlined),
-                selectedIcon: Icon(Icons.how_to_vote_rounded),
-                label: 'Elections',
-              ),
-            ],
-          ),
+          bottomNavigationBar: isCounselorOnly
+              ? null
+              : NavigationBar(
+                  selectedIndex: _selectedIndex,
+                  onDestinationSelected: (index) =>
+                      setState(() => _selectedIndex = index),
+                  destinations: const [
+                    NavigationDestination(
+                      icon: Icon(Icons.qr_code_2_outlined),
+                      selectedIcon: Icon(Icons.qr_code_2_rounded),
+                      label: 'Dashboard',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.event_note_outlined),
+                      selectedIcon: Icon(Icons.event_note_rounded),
+                      label: 'Events',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.payments_outlined),
+                      selectedIcon: Icon(Icons.payments_rounded),
+                      label: 'Dues',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.how_to_vote_outlined),
+                      selectedIcon: Icon(Icons.how_to_vote_rounded),
+                      label: 'Elections',
+                    ),
+                  ],
+                ),
         );
       },
     );

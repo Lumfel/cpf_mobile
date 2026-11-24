@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:cpf_mobile/config/api_config.dart';
 import 'package:cpf_mobile/screens/home_shell.dart';
 import 'package:cpf_mobile/screens/landing_login_screen.dart';
+import 'package:cpf_mobile/screens/password_change_required_screen.dart';
 import 'package:cpf_mobile/services/api_client.dart';
 import 'package:cpf_mobile/services/auth_service.dart';
 import 'package:cpf_mobile/services/elections_service.dart';
@@ -48,6 +49,8 @@ class _CpfAppState extends State<CpfApp> {
       apiConfig: _apiConfig,
       storage: _storage,
       onUnauthorized: () => controller.handleUnauthorized(),
+      onMustChangePasswordRequired: () =>
+          controller.markPasswordChangeRequired(),
     );
     _authService = AuthService(_apiClient);
     _eventsService = EventsService(_apiClient);
@@ -88,14 +91,21 @@ class _CpfAppState extends State<CpfApp> {
           home: (_authController.isInitializing && widget.initialInitialize)
               ? const _SplashScreen()
               : _authController.isAuthenticated
-                  ? HomeShell(
-                      authController: _authController,
-                      eventsService: _eventsService,
-                      paymentService: _paymentService,
-                      electionsService: _electionsService,
-                      storage: _storage,
-                      themeController: _themeController,
-                    )
+                  ? (_authController.requiresPasswordChange
+                      ? PasswordChangeRequiredScreen(
+                          authController: _authController,
+                          apiConfig: _apiConfig,
+                          themeController: _themeController,
+                          storage: _storage,
+                        )
+                      : HomeShell(
+                          authController: _authController,
+                          eventsService: _eventsService,
+                          paymentService: _paymentService,
+                          electionsService: _electionsService,
+                          storage: _storage,
+                          themeController: _themeController,
+                        ))
                   : PublicLandingLoginScreen(
                       authController: _authController,
                       apiConfig: _apiConfig,

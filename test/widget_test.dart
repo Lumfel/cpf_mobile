@@ -6,10 +6,15 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:cpf_mobile/config/api_config.dart';
 import 'package:cpf_mobile/models/auth_profile.dart';
 import 'package:cpf_mobile/models/cpf_role.dart';
+import 'package:cpf_mobile/screens/home_shell.dart';
 import 'package:cpf_mobile/screens/landing_login_screen.dart';
+import 'package:cpf_mobile/screens/password_change_required_screen.dart';
 import 'package:cpf_mobile/screens/peer_dashboard_screen.dart';
 import 'package:cpf_mobile/services/api_client.dart';
 import 'package:cpf_mobile/services/auth_service.dart';
+import 'package:cpf_mobile/services/elections_service.dart';
+import 'package:cpf_mobile/services/events_service.dart';
+import 'package:cpf_mobile/services/membership_payment_service.dart';
 import 'package:cpf_mobile/services/secure_storage_service.dart';
 import 'package:cpf_mobile/state/auth_controller.dart';
 import 'package:cpf_mobile/theme/cpf_themes.dart';
@@ -78,14 +83,23 @@ class _StubAdapter implements HttpClientAdapter {
 
 void main() {
   group('CpfRole domain constraints', () {
-    test('supports exactly 6 native roles and rejects admin', () {
-      expect(CpfRole.values.length, 6);
+    test('supports all 11 native roles, gates guidance_counselor, and rejects admin', () {
+      expect(CpfRole.values.length, 11);
       expect(CpfRole.fromApi('adviser'), CpfRole.adviser);
+      expect(CpfRole.fromApi('guidance_counselor'), CpfRole.guidanceCounselor);
       expect(CpfRole.fromApi('president'), CpfRole.president);
       expect(CpfRole.fromApi('vice_president'), CpfRole.vicePresident);
       expect(CpfRole.fromApi('secretary'), CpfRole.secretary);
       expect(CpfRole.fromApi('treasurer'), CpfRole.treasurer);
+      expect(CpfRole.fromApi('auditor'), CpfRole.auditor);
+      expect(CpfRole.fromApi('business_manager'), CpfRole.businessManager);
+      expect(CpfRole.fromApi('pio'), CpfRole.pio);
+      expect(CpfRole.fromApi('sergeant_at_arms'), CpfRole.sergeantAtArms);
       expect(CpfRole.fromApi('member'), CpfRole.member);
+
+      expect(CpfRole.guidanceCounselor.isGuidanceCounselorOnly, isTrue);
+      expect(CpfRole.guidanceCounselor.isOfficerOrAdviser, isFalse);
+      expect(CpfRole.adviser.isGuidanceCounselorOnly, isFalse);
 
       expect(CpfRole.fromApi('admin'), isNull);
       expect(CpfRole.fromApi('super_admin'), isNull);
@@ -485,6 +499,118 @@ void main() {
       await tester.tap(find.text('Test Connection'));
       await tester.pumpAndSettle();
       expect(find.text('Database unavailable'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Guidance Counselor role hides Events, Dues, Elections, and Messenger GC tabs in HomeShell',
+    (WidgetTester tester) async {
+      final apiConfig = ApiConfig();
+      final storage = _InMemorySecureStorage();
+      final themeController = ThemeController();
+      final apiClient = ApiClient(apiConfig: apiConfig, storage: storage);
+      apiClient.dio.httpClientAdapter = _StubAdapter((_) {
+        return ResponseBody.fromString(
+          '{"token_type":"Bearer","token":"1|gc","user":{"id":25,"name":"Soriano, Clarissa D.","email":"counselor@chmsu.edu.ph","must_change_password":false},"verified_role":"guidance_counselor","verified_role_label":"Guidance Counselor","is_alumni":false,"permissions":{"is_officer_or_adviser":false,"is_club_adviser":false,"can_propose_events":false,"can_scan_attendance":false,"can_access_archive":true},"campus":{"id":1,"code":"ALIJIS","name":"CHMSU Alijis Campus","slug":"alijis","current_academic_year":"2026-2027"},"qr_unlocked":false,"member_id_code":null,"qr_payload":null}',
+          200,
+          headers: {
+            Headers.contentTypeHeader: ['application/json'],
+          },
+        );
+      });
+
+      final authController = AuthController(
+        apiConfig: apiConfig,
+        storage: storage,
+        apiClient: apiClient,
+        authService: AuthService(apiClient),
+      );
+      await authController.signInWithEmail(
+        email: 'counselor@chmsu.edu.ph',
+        password: 'secret',
+      );
+
+      expect(authController.profile?.isGuidanceCounselorOnly, isTrue);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: themeController.themeData,
+          home: HomeShell(
+            authController: authController,
+            eventsService: EventsService(apiClient),
+            paymentService: MembershipPaymentService(apiClient),
+            electionsService: ElectionsService(apiClient),
+            storage: storage,
+            themeController: themeController,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Coordination-Only Role'), findsOneWidget);
+      expect(find.byType(NavigationBar), findsNothing);
+      expect(find.text('Events'), findsNothing);
+      expect(find.text('Dues'), findsNothing);
+      expect(find.text('Elections'), findsNothing);
+      expect(find.text('Messenger GC A–Z Checklist'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'Blocking must_change_password gate triggers on 403 must_change_password_required and renders lock screen',
+    (WidgetTester tester) async {
+      final apiConfig = ApiConfig();
+      final storage = _InMemorySecureStorage(<String, String>{
+        'token': '1|tempToken',
+      });
+      final themeController = ThemeController();
+      var triggered = false;
+      final apiClient = ApiClient(
+        apiConfig: apiConfig,
+        storage: storage,
+        onMustChangePasswordRequired: () => triggered = true,
+      );
+      apiClient.dio.httpClientAdapter = _StubAdapter((_) {
+        return ResponseBody.fromString(
+          '{"code":"must_change_password_required","message":"Password change required."}',
+          403,
+          headers: {
+            Headers.contentTypeHeader: ['application/json'],
+          },
+        );
+      });
+
+      await expectLater(
+        () => apiClient.dio.get<dynamic>('/events'),
+        throwsA(isA<DioException>()),
+      );
+      expect(triggered, isTrue);
+
+      final authController = AuthController(
+        apiConfig: apiConfig,
+        storage: storage,
+        apiClient: apiClient,
+        authService: AuthService(apiClient),
+      );
+      authController.markPasswordChangeRequired();
+      expect(authController.requiresPasswordChange, isTrue);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: themeController.themeData,
+          home: PasswordChangeRequiredScreen(
+            authController: authController,
+            apiConfig: apiConfig,
+            themeController: themeController,
+            storage: storage,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Password Change Required'), findsOneWidget);
+      expect(find.text('Refresh Status'), findsOneWidget);
+      expect(find.text('Sign Out'), findsOneWidget);
     },
   );
 }

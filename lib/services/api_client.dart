@@ -25,6 +25,7 @@ class ApiClient {
     required this.apiConfig,
     required this.storage,
     this.onUnauthorized,
+    this.onMustChangePasswordRequired,
     Dio? dio,
   }) : _dio = dio ??
             Dio(
@@ -73,6 +74,19 @@ class ApiClient {
             setCachedToken(null);
             await storage.deleteToken();
             onUnauthorized?.call();
+          } else if (statusCode == 403 && !isPublicAuth) {
+            final data = error.response?.data;
+            final code = data is Map
+                ? (data['code'] ?? data['error'] ?? data['status'])?.toString()
+                : null;
+            final message = data is Map ? data['message']?.toString() : null;
+            if (code == 'must_change_password_required' ||
+                (message != null &&
+                    message
+                        .toLowerCase()
+                        .contains('must_change_password_required'))) {
+              onMustChangePasswordRequired?.call();
+            }
           }
           handler.next(error);
         },
@@ -83,6 +97,7 @@ class ApiClient {
   final ApiConfig apiConfig;
   final SecureStorageService storage;
   final VoidCallback? onUnauthorized;
+  final VoidCallback? onMustChangePasswordRequired;
   final Dio _dio;
 
   String? _cachedToken;

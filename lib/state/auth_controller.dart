@@ -27,6 +27,7 @@ class AuthController extends ChangeNotifier {
   bool _isInitializing = true;
   bool _isLoading = false;
   bool _isOfflineCached = false;
+  bool _passwordChangeRequired = false;
   String? _errorMessage;
   String? _sessionExpiredNotice;
 
@@ -35,6 +36,8 @@ class AuthController extends ChangeNotifier {
   bool get isInitializing => _isInitializing;
   bool get isLoading => _isLoading;
   bool get isOfflineCached => _isOfflineCached;
+  bool get requiresPasswordChange =>
+      _passwordChangeRequired || (_profile?.user.mustChangePassword ?? false);
   String? get errorMessage => _errorMessage;
   String? get sessionExpiredNotice => _sessionExpiredNotice;
 
@@ -59,6 +62,7 @@ class AuthController extends ChangeNotifier {
         final fresh = await authService.fetchMe();
         _profile = fresh;
         _isOfflineCached = false;
+        _passwordChangeRequired = fresh.user.mustChangePassword;
         _errorMessage = null;
         _sessionExpiredNotice = null;
         await localDb.cacheProfile(fresh);
@@ -70,6 +74,7 @@ class AuthController extends ChangeNotifier {
         await localDb.clearCachedProfile();
         _profile = null;
         _isOfflineCached = false;
+        _passwordChangeRequired = false;
         _sessionExpiredNotice =
             'Your previous session expired. Please sign in again.';
       } else if (cachedProfile != null) {
@@ -159,6 +164,7 @@ class AuthController extends ChangeNotifier {
       final fresh = await authService.fetchMe();
       _profile = fresh;
       _isOfflineCached = false;
+      _passwordChangeRequired = fresh.user.mustChangePassword;
       _errorMessage = null;
       await localDb.cacheProfile(fresh);
       notifyListeners();
@@ -193,6 +199,7 @@ class AuthController extends ChangeNotifier {
       await localDb.clearCachedProfile();
       _profile = null;
       _isOfflineCached = false;
+      _passwordChangeRequired = false;
       _errorMessage = null;
       _sessionExpiredNotice = null;
       _isLoading = false;
@@ -206,8 +213,16 @@ class AuthController extends ChangeNotifier {
     localDb.clearCachedProfile();
     _profile = null;
     _isOfflineCached = false;
+    _passwordChangeRequired = false;
     _sessionExpiredNotice =
         'Your session expired or was revoked. Sign in again.';
+    notifyListeners();
+  }
+
+  /// Called when any protected API returns HTTP 403 `must_change_password_required`.
+  void markPasswordChangeRequired() {
+    if (_passwordChangeRequired) return;
+    _passwordChangeRequired = true;
     notifyListeners();
   }
 
@@ -229,6 +244,7 @@ class AuthController extends ChangeNotifier {
     await localDb.cacheProfile(result.profile);
     _profile = result.profile;
     _isOfflineCached = false;
+    _passwordChangeRequired = result.profile.user.mustChangePassword;
     _errorMessage = null;
     _sessionExpiredNotice = null;
   }

@@ -248,14 +248,19 @@ class PeerDashboardScreen extends StatelessWidget {
             const SizedBox(height: 10),
             _buildOfflineBanner(p),
           ],
-          if (profile.user.mustChangePassword ||
-              profile.isAlumni ||
-              !profile.qrUnlocked) ...[
+          if (!profile.isGuidanceCounselorOnly &&
+              (profile.user.mustChangePassword ||
+                  profile.isAlumni ||
+                  !profile.qrUnlocked)) ...[
             const SizedBox(height: 12),
             _buildStatusAlert(p, profile),
           ],
           const SizedBox(height: 14),
-          FadeSlideIn(child: _buildQrCard(context, p, profile)),
+          FadeSlideIn(
+            child: profile.isGuidanceCounselorOnly
+                ? _buildCounselorCoordinationCard(p, profile)
+                : _buildQrCard(context, p, profile),
+          ),
           if (profile.dailyQuote != null) ...[
             const SizedBox(height: 14),
             FadeSlideIn(child: _buildQuoteCard(p, profile.dailyQuote!)),
@@ -709,11 +714,84 @@ class PeerDashboardScreen extends StatelessWidget {
     );
   }
 
+  Widget _buildCounselorCoordinationCard(CpfPalette p, AuthProfile profile) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: p.heroCard,
+        borderRadius: BorderRadius.circular(24),
+        border: p.themeId.isDark ? Border.all(color: p.border) : null,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.psychology_alt_rounded, color: p.accent, size: 22),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'GUIDANCE COORDINATION ACCESS',
+                  style: TextStyle(
+                    color: p.heroMuted,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.9,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Coordination-Only Role',
+            style: TextStyle(
+              color: p.heroText,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Non-Adviser Guidance Counselors have strictly coordination-only access (Guidance Referrals, Testing Room schedules, and Counselors Private GC). Student club events, dues/payments, elections, and Messenger GC checklists are hidden.',
+            style: TextStyle(
+              color: p.heroMuted,
+              fontSize: 13,
+              height: 1.45,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildQuickLinks(
     BuildContext context,
     CpfPalette p,
     AuthProfile profile,
   ) {
+    if (profile.isGuidanceCounselorOnly) {
+      return Column(
+        children: [
+          _QuickLinkTile(
+            icon: Icons.badge_outlined,
+            accent: p.primary,
+            title: 'Counselor & Campus Profile',
+            subtitle: 'View your assigned CHMSU campus details',
+            onTap: () => _showMembershipInfoSheet(context, profile),
+          ),
+          const SizedBox(height: 10),
+          _QuickLinkTile(
+            icon: Icons.verified_user_outlined,
+            accent: p.muted,
+            title: 'Data Privacy Notice',
+            subtitle: 'RA 10173 clinical confidentiality and campus isolation',
+            onTap: () => showDataPrivacyModal(context),
+          ),
+        ],
+      );
+    }
+
     return Column(
       children: [
         _QuickLinkTile(

@@ -260,33 +260,39 @@ class AuthProfile {
     return 'Pending Verification';
   }
 
+  /// True when the signed-in user is a non-Adviser Guidance Counselor
+  /// (coordination-only boundary — Rule 2).
+  bool get isGuidanceCounselorOnly =>
+      !isAlumni &&
+      ((verifiedRole?.isGuidanceCounselorOnly ?? false) ||
+          verifiedRoleRaw?.trim().toLowerCase() == 'guidance_counselor');
+
   /// Whether this user holds active officer or Club Adviser authority.
   bool get isOfficerOrAdviser =>
       !isAlumni &&
+      !isGuidanceCounselorOnly &&
       (permissions.isOfficerOrAdviser ||
           (verifiedRole?.isOfficerOrAdviser ?? false));
 
   /// Whether this user is an active same-campus Officer or Club Adviser allowed
   /// to operate the 2-stage QR attendance scanner.
   bool get canScanEvents =>
-      !isAlumni && permissions.canScanAttendance && isOfficerOrAdviser;
+      !isAlumni &&
+      !isGuidanceCounselorOnly &&
+      permissions.canScanAttendance &&
+      isOfficerOrAdviser;
 
   /// Whether this user can confirm the Messenger GC checklist.
   bool get canConfirmMessengerGc =>
       !isAlumni &&
-      (verifiedRole == CpfRole.adviser ||
-          verifiedRole == CpfRole.president ||
-          verifiedRole == CpfRole.vicePresident ||
-          verifiedRole == CpfRole.secretary ||
-          verifiedRoleRaw == 'pio');
+      !isGuidanceCounselorOnly &&
+      (verifiedRole?.canConfirmMessengerGc ?? false);
 
   /// Whether this user can validate chapter dues/payment receipts.
   bool get canValidatePayments =>
       !isAlumni &&
-      (verifiedRole == CpfRole.treasurer ||
-          verifiedRole == CpfRole.adviser ||
-          verifiedRole == CpfRole.president ||
-          verifiedRole == CpfRole.vicePresident);
+      !isGuidanceCounselorOnly &&
+      (verifiedRole?.canValidatePayments ?? false);
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'user': user.toJson(),
