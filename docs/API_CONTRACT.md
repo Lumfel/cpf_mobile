@@ -577,9 +577,16 @@ Validates optional slot suggestions (`preferred_date`, `preferred_start_time`, `
 ### 15. Get Active Campus Election, Seats, Nominees & Voting Status
 
 `GET /api/v1/elections/active`  
-**Auth:** `Bearer <token>` (`auth:sanctum`) — **Requires verified campus member or Club Adviser; Guidance Counselors blocked (`403`)**
+**Auth:** `Bearer <token>` (`auth:sanctum`) — **Requires verified campus member/officer or Club Adviser; non-Adviser `guidance_counselor` blocked (`403`)**
 
-Returns `"active_election": null` when no open election session is currently running on the user's campus.
+Returns `"active_election": null` when no election session is currently active on the user's campus. While a session is running or concluding, `active_election.status` reflects `"open"`, `"paused"`, or `"completed"`, and each entry in `seats` reports `result: null` or `{ "status": "elected" | "vacant" | "skipped", "winner_user_id": ..., "winner_name": ..., "votes": ... }`.
+
+`voting_status.can_nominate` and `voting_status.can_vote` are computed authoritatively by the backend and strictly respected by mobile UI controls:
+- **Phase & Status Gate:** Both flags are `false` whenever `status !== "open"` (including `"paused"` and `"completed"`). `can_nominate` is `true` only during `current_phase === "nomination"`; `can_vote` is `true` only during `"voting"` or `"tie_breaker"`.
+- **Runoff Contenders:** During runoff / `"tie_breaker"` rounds, only accepted candidates flagged with `is_tie_contender: true` are eligible to receive votes.
+- **Already-Elected Winner Lock:** Members already elected to an earlier seat in the session (`is_already_elected: true` / present in `position_results` or `seats[].result.winner_user_id`) are locked into their won office and cannot be nominated or self-nominate for subsequent seats.
+- **Club Adviser Tie-Break-Only:** The Club Adviser chairs the session (`can_nominate: false`, `can_vote: false` during regular `"voting"`) and receives `can_vote: true` **only** when breaking a `"tie_breaker"` deadlock.
+- **Non-Adviser Guidance Counselor Block:** Accounts with `verified_role === "guidance_counselor"` are strictly coordination-only and receive `403 Forbidden`.
 
 #### Response `200 OK`
 ```json
@@ -635,7 +642,8 @@ Returns `"active_election": null` when no open election session is currently run
       "has_voted_current_round": false,
       "my_current_vote_candidate_id": null,
       "my_votes": {},
-      "has_opted_out": false
+      "has_opted_out": false,
+      "is_already_elected": false
     },
     "live_chat": {
       "enabled": true,
@@ -652,7 +660,7 @@ Returns `"active_election": null` when no open election session is currently run
 ### 16. Nominate Candidate for Current Seat
 
 `POST /api/v1/elections/{election}/nominate`  
-**Auth:** `Bearer <token>` (`auth:sanctum`) — **Requires verified same-campus member while `status === "open"` and `current_phase === "nomination"`**
+**Auth:** `Bearer <token>` (`auth:sanctum`) — **Requires verified same-campus student member/officer while `status === "open"` and `current_phase === "nomination"` (`can_nominate === true`); already-elected winners, opted-out members, Club Adviser, and non-Adviser `guidance_counselor` blocked (`403` / `422`)**
 
 #### Request Body
 ```json
@@ -681,7 +689,7 @@ Returns `"active_election": null` when no open election session is currently run
 ### 17. Cast Floor Vote
 
 `POST /api/v1/elections/{election}/vote`  
-**Auth:** `Bearer <token>` (`auth:sanctum`) — **Requires verified student member/officer (Adviser & Guidance Counselors blocked with `403`) while `current_phase` is `"voting"` or `"tie_breaker"`**
+**Auth:** `Bearer <token>` (`auth:sanctum`) — **Requires `status === "open"` and `can_vote === true`: verified same-campus student member/officer during `"voting"` / runoff, or Club Adviser exclusively during `"tie_breaker"` (Adviser blocked during regular `"voting"`; non-Adviser `guidance_counselor` always blocked with `403`)**
 
 #### Request Body
 ```json
@@ -690,7 +698,7 @@ Returns `"active_election": null` when no open election session is currently run
   "position": "president"
 }
 ```
-> `position` is optional on mobile and defaults to the election's active `current_position` if omitted.
+> `position` is optional on mobile and defaults to the election's active `current_position` if omitted. During runoff / `"tie_breaker"` rounds, `candidate_id` must belong to an accepted `is_tie_contender` candidate who is not already locked into an earlier seat.
 
 #### Response `200 OK`
 ```json
@@ -706,10 +714,10 @@ Returns `"active_election": null` when no open election session is currently run
 
 `GET /api/v1/elections/{election}/live-chat`  
 `POST /api/v1/elections/{election}/live-chat` (**Rate Limit:** `30 requests / minute`)  
-**Auth:** `Bearer <token>` (`auth:sanctum`) — **Verified same-campus members & Club Adviser only**
+**Auth:** `Bearer <token>` (`auth:sanctum`) — **Verified same-campus members/officers & Club Adviser only (non-Adviser `guidance_counselor` blocked with `403`)**
 
 - **Zero Permanent Storage:** Messages are stored **exclusively** in Laravel `Cache` under key `election:{id}:live_chat` (capped at the latest `100` messages with a `2-hour` TTL). No database table is ever written.
-- **Active Session Guard:** If the election is `draft`, `closed`, `completed`, or outside its `opens_at`/`closes_at` window, both `GET` and `POST` return `422 Unprocessable Content` (`403 Forbidden` for unauthorized/cross-campus users).
+- **Active Session Guard:** If the election is `draft`, `paused`, `closed`, `completed`, or outside its `opens_at`/`closes_at` window, both `GET` and `POST` return `422 Unprocessable Content` (`403 Forbidden` for unauthorized/cross-campus users). Mobile stops live-chat polling and clears in-memory messages immediately whenever `status !== "open"`.
 - **Automatic Flush on Close:** Closing or completing an election (`Election` model lifecycle hook) immediately flushes `Cache::forget("election:{id}:live_chat")` so session chat is permanently wiped.
 
 #### `POST` Request Body

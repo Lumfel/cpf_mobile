@@ -81,11 +81,18 @@ class ElectionsService {
     required int electionId,
     required String messageBody,
   }) async {
+    final trimmed = messageBody.trim();
+    if (trimmed.isEmpty) {
+      throw const ApiException(
+        message: 'Enter a message before sending to session chat.',
+        statusCode: 422,
+      );
+    }
     try {
       final response = await _client.dio.post<dynamic>(
         '/elections/$electionId/live-chat',
         data: <String, dynamic>{
-          'message_body': messageBody.trim(),
+          'message_body': trimmed,
         },
       );
       final map = _client.expectJsonMap(response.data);

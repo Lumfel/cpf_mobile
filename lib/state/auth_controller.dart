@@ -184,6 +184,23 @@ class AuthController extends ChangeNotifier {
     }
   }
 
+  /// Silently refreshes `GET /api/v1/auth/me` in the background (for example
+  /// when a campus election completes) so newly elected officers receive their
+  /// updated `verified_role`, permissions, and signed QR pass immediately.
+  Future<void> refreshProfileSilently() async {
+    if (_profile == null) return;
+    try {
+      final fresh = await authService.fetchMe();
+      _profile = fresh;
+      _isOfflineCached = false;
+      _passwordChangeRequired = fresh.user.mustChangePassword;
+      await localDb.cacheProfile(fresh);
+      notifyListeners();
+    } catch (_) {
+      // Silent background refresh — preserve current session state on transient errors.
+    }
+  }
+
   /// Revokes the current Sanctum token and clears both SecureStorage & SQLite.
   Future<void> signOut() async {
     _isLoading = true;

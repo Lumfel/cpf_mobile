@@ -6,6 +6,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:cpf_mobile/config/api_config.dart';
 import 'package:cpf_mobile/models/auth_profile.dart';
 import 'package:cpf_mobile/models/cpf_role.dart';
+import 'package:cpf_mobile/models/election_models.dart';
+import 'package:cpf_mobile/screens/elections_screen.dart';
 import 'package:cpf_mobile/screens/home_shell.dart';
 import 'package:cpf_mobile/screens/landing_login_screen.dart';
 import 'package:cpf_mobile/screens/password_change_required_screen.dart';
@@ -14,6 +16,7 @@ import 'package:cpf_mobile/services/api_client.dart';
 import 'package:cpf_mobile/services/auth_service.dart';
 import 'package:cpf_mobile/services/elections_service.dart';
 import 'package:cpf_mobile/services/events_service.dart';
+import 'package:cpf_mobile/services/local_db_service.dart';
 import 'package:cpf_mobile/services/membership_payment_service.dart';
 import 'package:cpf_mobile/services/secure_storage_service.dart';
 import 'package:cpf_mobile/state/auth_controller.dart';
@@ -324,6 +327,7 @@ void main() {
         storage: storage,
         apiClient: apiClient,
         authService: AuthService(apiClient),
+        localDb: LocalDbService(inMemoryOnly: true),
       );
 
       await tester.pumpWidget(
@@ -403,10 +407,13 @@ void main() {
         storage: storage,
         apiClient: apiClient,
         authService: AuthService(apiClient),
+        localDb: LocalDbService(inMemoryOnly: true),
       );
-      await authController.signInWithEmail(
-        email: 'sofia@chmsu.edu.ph',
-        password: 'secret',
+      await tester.runAsync(
+        () => authController.signInWithEmail(
+          email: 'sofia@chmsu.edu.ph',
+          password: 'secret',
+        ),
       );
 
       for (final themeId in [CpfThemeId.dark, CpfThemeId.vice]) {
@@ -524,10 +531,13 @@ void main() {
         storage: storage,
         apiClient: apiClient,
         authService: AuthService(apiClient),
+        localDb: LocalDbService(inMemoryOnly: true),
       );
-      await authController.signInWithEmail(
-        email: 'counselor@chmsu.edu.ph',
-        password: 'secret',
+      await tester.runAsync(
+        () => authController.signInWithEmail(
+          email: 'counselor@chmsu.edu.ph',
+          password: 'secret',
+        ),
       );
 
       expect(authController.profile?.isGuidanceCounselorOnly, isTrue);
@@ -580,10 +590,12 @@ void main() {
         );
       });
 
-      await expectLater(
-        () => apiClient.dio.get<dynamic>('/events'),
-        throwsA(isA<DioException>()),
-      );
+      await tester.runAsync(() async {
+        await expectLater(
+          () => apiClient.dio.get<dynamic>('/events'),
+          throwsA(isA<DioException>()),
+        );
+      });
       expect(triggered, isTrue);
 
       final authController = AuthController(
@@ -591,6 +603,7 @@ void main() {
         storage: storage,
         apiClient: apiClient,
         authService: AuthService(apiClient),
+        localDb: LocalDbService(inMemoryOnly: true),
       );
       authController.markPasswordChangeRequired();
       expect(authController.requiresPasswordChange, isTrue);
@@ -611,6 +624,169 @@ void main() {
       expect(find.text('Password Change Required'), findsOneWidget);
       expect(find.text('Refresh Status'), findsOneWidget);
       expect(find.text('Sign Out'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'ElectionsScreen handles vacant seats, paused/completed chat wipe, and silent /auth/me role refresh',
+    (WidgetTester tester) async {
+      final apiConfig = ApiConfig();
+      final storage = _InMemorySecureStorage(<String, String>{
+        'token': '1|memberToken',
+      });
+      final apiClient = ApiClient(apiConfig: apiConfig, storage: storage);
+
+      var currentRole = 'member';
+      var currentRoleLabel = 'Member';
+      var meFetchCount = 0;
+      var electionStatus = 'paused';
+
+      apiClient.dio.httpClientAdapter = _StubAdapter((options) {
+        if (options.path.endsWith('/auth/login') ||
+            options.path.endsWith('/auth/me')) {
+          if (options.path.endsWith('/auth/me')) {
+            meFetchCount++;
+          }
+          return ResponseBody.fromString(
+            '{"token_type":"Bearer","token":"1|memberToken","user":{"id":19,"name":"Reyes, Katrina M.","email":"katrina@chmsu.edu.ph","must_change_password":false},"verified_role":"$currentRole","verified_role_label":"$currentRoleLabel","is_alumni":false,"permissions":{"is_officer_or_adviser":${currentRole != 'member'},"is_club_adviser":false,"can_propose_events":${currentRole == 'president'},"can_scan_attendance":${currentRole != 'member'},"can_access_archive":${currentRole != 'member'}},"campus":{"id":1,"code":"ALIJIS","name":"CHMSU Alijis Campus","slug":"alijis","current_academic_year":"2026-2027"},"qr_unlocked":true,"member_id_code":"CPF-ALIJIS-2026-0019","qr_payload":"CPF|campus:ALIJIS|user:19|role:$currentRole|sig:123456"}',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        }
+
+        if (options.path.endsWith('/elections/active')) {
+          return ResponseBody.fromString(
+            '{"campus":{"id":1,"code":"ALIJIS","name":"CHMSU Alijis Campus"},"seats":[{"key":"president","label":"President","optional":false,"seat_order":1,"is_current":false,"result":{"status":"elected","winner_user_id":19,"winner_name":"Reyes, Katrina M."}},{"key":"auditor","label":"Auditor","optional":true,"seat_order":2,"is_current":false,"result":{"status":"vacant"}}],"active_election":{"id":5,"title":"AY 2026-2027 CPF General Election","academic_year":"2026-2027","status":"$electionStatus","current_position":"auditor","current_position_label":"Auditor","current_phase":"voting","round_number":1,"nominees":[],"current_position_nominees":[],"voting_status":{"can_nominate":false,"can_vote":false,"has_voted_current_round":false,"my_current_vote_candidate_id":null,"has_opted_out":false,"is_already_elected":true},"live_chat":{"enabled":true}}}',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        }
+
+        return ResponseBody.fromString('{}', 200);
+      });
+
+      final authController = AuthController(
+        apiConfig: apiConfig,
+        storage: storage,
+        apiClient: apiClient,
+        authService: AuthService(apiClient),
+        localDb: LocalDbService(inMemoryOnly: true),
+      );
+
+      await tester.runAsync(
+        () => authController.signInWithEmail(
+          email: 'katrina@chmsu.edu.ph',
+          password: 'secret',
+        ),
+      );
+      expect(authController.profile?.verifiedRole, CpfRole.member);
+
+      // Update server-side role to newly elected President.
+      currentRole = 'president';
+      currentRoleLabel = 'President';
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: CpfThemes.themeDataFor(CpfThemeId.light),
+          home: Scaffold(
+            body: ElectionsScreen(
+              authController: authController,
+              electionsService: ElectionsService(apiClient),
+            ),
+          ),
+        ),
+      );
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pumpAndSettle();
+
+      // Paused state hides Session Chat, renders Vacant seat badge, and syncs newly won seat.
+      expect(find.text('SESSION PAUSED'), findsOneWidget);
+      expect(find.text('Vacant'), findsOneWidget);
+      expect(find.textContaining('Session Chat'), findsNothing);
+      expect(meFetchCount, greaterThanOrEqualTo(1));
+      expect(authController.profile?.verifiedRole, CpfRole.president);
+
+      // Transition election to completed and pull-to-refresh.
+      electionStatus = 'completed';
+      final prevMeFetches = meFetchCount;
+      await tester.drag(find.byType(ListView), const Offset(0, 300));
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pumpAndSettle();
+
+      expect(find.text('ELECTION COMPLETED'), findsOneWidget);
+      expect(find.text('Vacant'), findsOneWidget);
+      expect(find.textContaining('Session Chat'), findsNothing);
+      expect(meFetchCount, greaterThan(prevMeFetches));
+
+      // Unit-verify ActiveElectionSession runoff & already-elected eligibility.
+      final session = ActiveElectionSession.fromJson(<String, dynamic>{
+        'id': 9,
+        'status': 'open',
+        'current_position': 'vice_president',
+        'current_phase': 'tie_breaker',
+        'round_number': 2,
+        'position_results': <String, dynamic>{
+          'president': <String, dynamic>{
+            'status': 'elected',
+            'winner_user_id': 19,
+          },
+        },
+        'current_position_nominees': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 1,
+            'user_id': 20,
+            'name': 'Contender A',
+            'position': 'vice_president',
+            'nomination_status': 'accepted',
+            'is_tie_contender': true,
+            'votes': 5,
+          },
+          <String, dynamic>{
+            'id': 2,
+            'user_id': 21,
+            'name': 'Non-Contender B',
+            'position': 'vice_president',
+            'nomination_status': 'accepted',
+            'is_tie_contender': false,
+            'votes': 2,
+          },
+          <String, dynamic>{
+            'id': 3,
+            'user_id': 19,
+            'name': 'Already Elected Winner',
+            'position': 'vice_president',
+            'nomination_status': 'accepted',
+            'is_tie_contender': true,
+            'votes': 5,
+          },
+        ],
+        'voting_status': <String, dynamic>{
+          'can_nominate': false,
+          'can_vote': true,
+        },
+      });
+      expect(
+        session.isCandidateEligibleForCurrentRound(
+          session.currentPositionNominees[0],
+        ),
+        isTrue,
+      );
+      expect(
+        session.isCandidateEligibleForCurrentRound(
+          session.currentPositionNominees[1],
+        ),
+        isFalse,
+      );
+      expect(
+        session.isCandidateEligibleForCurrentRound(
+          session.currentPositionNominees[2],
+        ),
+        isFalse,
+      );
     },
   );
 }

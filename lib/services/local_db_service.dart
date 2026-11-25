@@ -12,7 +12,9 @@ import 'package:cpf_mobile/models/auth_profile.dart';
 /// The Sanctum Bearer token is NEVER stored here — it stays encrypted inside
 /// `flutter_secure_storage`.
 class LocalDbService {
-  LocalDbService();
+  LocalDbService({this.inMemoryOnly = false});
+
+  final bool inMemoryOnly;
 
   static const String _dbFileName = 'cpf_mobile_offline.db';
   static const int _dbVersion = 1;
@@ -22,7 +24,7 @@ class LocalDbService {
   AuthProfile? _memoryFallback;
 
   Future<Database?> _openDb() async {
-    if (kIsWeb) {
+    if (kIsWeb || inMemoryOnly) {
       return null;
     }
     if (_db != null) {
