@@ -91,4 +91,20 @@ class SecureStorageService {
     final encoded = jsonEncode(entries.map((e) => e.toJson()).toList());
     await _storage.write(key: '$_checklistPrefix$eventId', value: encoded);
   }
+
+  /// Removes all cached per-event attendance checklist entries
+  /// (`cpf_event_checklist_*`) so shared devices do not retain attendee data
+  /// across sign-out or session revocation.
+  Future<void> clearAllEventChecklists() async {
+    try {
+      final all = await _storage.readAll();
+      for (final key in all.keys) {
+        if (key.startsWith(_checklistPrefix)) {
+          await _storage.delete(key: key);
+        }
+      }
+    } catch (_) {
+      // Ignore KeyStore cleanup failures on corrupted/reset devices.
+    }
+  }
 }

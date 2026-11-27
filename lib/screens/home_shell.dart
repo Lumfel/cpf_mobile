@@ -188,11 +188,17 @@ class _HomeShellState extends State<HomeShell> {
               ),
             ],
           ),
-          body: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 220),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            child: activeBody,
+          body: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                child: activeBody,
+              ),
+            ),
           ),
           bottomNavigationBar: isCounselorOnly
               ? null

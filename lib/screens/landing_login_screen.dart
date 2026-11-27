@@ -35,14 +35,18 @@ class PublicLandingLoginScreen extends StatefulWidget {
 class _PublicLandingLoginScreenState extends State<PublicLandingLoginScreen> {
   final _emailFormKey = GlobalKey<FormState>();
   final _passkeyFormKey = GlobalKey<FormState>();
+  final _twoFactorFormKey = GlobalKey<FormState>();
 
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _passkeyEmailController = TextEditingController();
   final _passkeyCodeController = TextEditingController();
+  final _twoFactorCodeController = TextEditingController();
+  final _recoveryCodeController = TextEditingController();
 
   _SignInTab _activeTab = _SignInTab.emailPassword;
   bool _obscurePassword = true;
+  bool _useRecoveryCode = false;
 
   @override
   void dispose() {
@@ -50,6 +54,8 @@ class _PublicLandingLoginScreenState extends State<PublicLandingLoginScreen> {
     _passwordController.dispose();
     _passkeyEmailController.dispose();
     _passkeyCodeController.dispose();
+    _twoFactorCodeController.dispose();
+    _recoveryCodeController.dispose();
     super.dispose();
   }
 
@@ -60,6 +66,9 @@ class _PublicLandingLoginScreenState extends State<PublicLandingLoginScreen> {
   Future<void> _submitEmailLogin() async {
     if (!(_emailFormKey.currentState?.validate() ?? false)) return;
     FocusScope.of(context).unfocus();
+    _twoFactorCodeController.clear();
+    _recoveryCodeController.clear();
+    _useRecoveryCode = false;
     await widget.authController.signInWithEmail(
       email: _emailController.text,
       password: _passwordController.text,
@@ -69,10 +78,29 @@ class _PublicLandingLoginScreenState extends State<PublicLandingLoginScreen> {
   Future<void> _submitPasskeyLogin() async {
     if (!(_passkeyFormKey.currentState?.validate() ?? false)) return;
     FocusScope.of(context).unfocus();
+    _twoFactorCodeController.clear();
+    _recoveryCodeController.clear();
+    _useRecoveryCode = false;
     await widget.authController.signInWithPasskey(
       email: _passkeyEmailController.text,
       passkeyCode: _passkeyCodeController.text,
     );
+  }
+
+  Future<void> _submitTwoFactorChallenge() async {
+    if (!(_twoFactorFormKey.currentState?.validate() ?? false)) return;
+    FocusScope.of(context).unfocus();
+    await widget.authController.submitTwoFactorChallenge(
+      code: _useRecoveryCode ? null : _twoFactorCodeController.text,
+      recoveryCode: _useRecoveryCode ? _recoveryCodeController.text : null,
+    );
+  }
+
+  void _cancelTwoFactor() {
+    _twoFactorCodeController.clear();
+    _recoveryCodeController.clear();
+    setState(() => _useRecoveryCode = false);
+    widget.authController.cancelTwoFactorChallenge();
   }
 
   @override
@@ -89,35 +117,40 @@ class _PublicLandingLoginScreenState extends State<PublicLandingLoginScreen> {
             final error = widget.authController.errorMessage;
             final sessionNotice = widget.authController.sessionExpiredNotice;
 
-            return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(18, 12, 18, 28),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildTopBar(context, p),
-                  const SizedBox(height: 14),
-                  _buildLandingHero(p),
-                  const SizedBox(height: 18),
-                  if (sessionNotice != null) ...[
-                    _NoticeBanner(
-                      icon: Icons.info_outline_rounded,
-                      color: p.accent,
-                      message: sessionNotice,
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  if (error != null) ...[
-                    _NoticeBanner(
-                      icon: Icons.error_outline_rounded,
-                      color: p.error,
-                      message: error,
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  _buildSignInCard(p, isLoading),
-                  const SizedBox(height: 16),
-                  _buildPrivacyFooter(context, p),
-                ],
+            return Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 440),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildTopBar(context, p),
+                      const SizedBox(height: 12),
+                      _buildBrandStrip(p),
+                      if (sessionNotice != null) ...[
+                        const SizedBox(height: 10),
+                        _NoticeBanner(
+                          icon: Icons.info_outline_rounded,
+                          color: p.accent,
+                          message: sessionNotice,
+                        ),
+                      ],
+                      if (error != null) ...[
+                        const SizedBox(height: 10),
+                        _NoticeBanner(
+                          icon: Icons.error_outline_rounded,
+                          color: p.error,
+                          message: error,
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      _buildSignInCard(p, isLoading),
+                      const SizedBox(height: 10),
+                      _buildPrivacyFooter(context, p),
+                    ],
+                  ),
+                ),
               ),
             );
           },
@@ -129,7 +162,7 @@ class _PublicLandingLoginScreenState extends State<PublicLandingLoginScreen> {
   Widget _buildTopBar(BuildContext context, CpfPalette p) {
     return Row(
       children: [
-        const CpfEmblem(size: 42),
+        const CpfEmblem(size: 36),
         const SizedBox(width: 10),
         Expanded(
           child: Column(
@@ -138,7 +171,7 @@ class _PublicLandingLoginScreenState extends State<PublicLandingLoginScreen> {
               Text(
                 'CPF Mobile',
                 style: TextStyle(
-                  fontSize: 16,
+                  fontSize: 15.5,
                   fontWeight: FontWeight.w800,
                   color: p.text,
                 ),
@@ -146,7 +179,7 @@ class _PublicLandingLoginScreenState extends State<PublicLandingLoginScreen> {
               Text(
                 'Circle of Peer Facilitators',
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 11.5,
                   color: p.muted,
                 ),
               ),
@@ -167,12 +200,12 @@ class _PublicLandingLoginScreenState extends State<PublicLandingLoginScreen> {
           ),
           style: OutlinedButton.styleFrom(
             backgroundColor: p.card,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            minimumSize: const Size(0, 36),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            minimumSize: const Size(0, 34),
           ),
           icon: Icon(
             Icons.dns_outlined,
-            size: 16,
+            size: 15,
             color: widget.apiConfig.isCustom ? p.success : p.primary,
           ),
           label: Text(
@@ -188,90 +221,47 @@ class _PublicLandingLoginScreenState extends State<PublicLandingLoginScreen> {
     );
   }
 
-  Widget _buildLandingHero(CpfPalette p) {
+  Widget _buildBrandStrip(CpfPalette p) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
         color: p.heroCard,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(16),
         border: p.themeId.isDark ? Border.all(color: p.border) : null,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: p.themeId.isDark ? 0.3 : 0.14),
-            blurRadius: 16,
-            offset: const Offset(0, 8),
-          ),
-        ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              const CpfEmblem(size: 36),
-              const SizedBox(width: 10),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: p.accent.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: p.accent.withValues(alpha: 0.45),
-                  ),
-                ),
-                child: Text(
-                  'CHMSU PEER FACILITATORS',
+          Container(
+            padding: const EdgeInsets.all(9),
+            decoration: BoxDecoration(
+              color: p.heroCardElevated,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(Icons.qr_code_2_rounded, size: 22, color: p.accent),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'CHMSU Peer Facilitators',
                   style: TextStyle(
-                    color: p.accent,
-                    fontSize: 11,
+                    color: p.heroText,
+                    fontSize: 15,
                     fontWeight: FontWeight.w800,
-                    letterSpacing: 0.6,
                   ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(
-            'One safe campus space for peer care and attendance.',
-            style: TextStyle(
-              color: p.heroText,
-              fontSize: 21,
-              fontWeight: FontWeight.w800,
-              height: 1.25,
+                const SizedBox(height: 2),
+                Text(
+                  'Peer QR ID, campus events, dues & elections.',
+                  style: TextStyle(
+                    color: p.heroMuted,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Sign in with your verified account or one-time 12-character passkey to access your official Peer QR ID and campus activities.',
-            style: TextStyle(
-              color: p.heroMuted,
-              fontSize: 13,
-              height: 1.45,
-            ),
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _HeroPill(
-                icon: Icons.qr_code_2_rounded,
-                label: 'Verified Peer QR',
-                palette: p,
-              ),
-              _HeroPill(
-                icon: Icons.event_available_rounded,
-                label: 'Campus Events',
-                palette: p,
-              ),
-              _HeroPill(
-                icon: Icons.wb_sunny_outlined,
-                label: 'Daily Quotes',
-                palette: p,
-              ),
-            ],
           ),
         ],
       ),
@@ -279,77 +269,244 @@ class _PublicLandingLoginScreenState extends State<PublicLandingLoginScreen> {
   }
 
   Widget _buildSignInCard(CpfPalette p, bool isLoading) {
+    final challenge = widget.authController.pendingTwoFactor;
+
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: p.card,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: p.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            'Member Sign In',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-              color: p.text,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Server: ${widget.apiConfig.baseUrl}',
-            style: TextStyle(
-              fontSize: 11.5,
-              color: p.muted,
-            ),
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 14),
-          Container(
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              color: p.surface,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: _TabButton(
-                    label: 'Email & Password',
-                    selected: _activeTab == _SignInTab.emailPassword,
-                    onTap: isLoading
-                        ? null
-                        : () {
-                            widget.authController.clearMessages();
-                            setState(
-                              () => _activeTab = _SignInTab.emailPassword,
-                            );
-                          },
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  challenge != null
+                      ? 'Two-Factor Verification'
+                      : 'Member Sign In',
+                  style: TextStyle(
+                    fontSize: 16.5,
+                    fontWeight: FontWeight.w800,
+                    color: p.text,
                   ),
                 ),
-                const SizedBox(width: 4),
+              ),
+              Flexible(
+                child: Text(
+                  widget.apiConfig.baseUrl,
+                  style: TextStyle(fontSize: 11, color: p.muted),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (challenge != null)
+            _buildTwoFactorChallengeForm(p, challenge, isLoading)
+          else ...[
+            Container(
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                color: p.surface,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _TabButton(
+                      label: 'Email & Password',
+                      selected: _activeTab == _SignInTab.emailPassword,
+                      onTap: isLoading
+                          ? null
+                          : () {
+                              widget.authController.clearMessages();
+                              setState(
+                                () => _activeTab = _SignInTab.emailPassword,
+                              );
+                            },
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: _TabButton(
+                      label: '12-Char Passkey',
+                      selected: _activeTab == _SignInTab.passkeyCode,
+                      onTap: isLoading
+                          ? null
+                          : () {
+                              widget.authController.clearMessages();
+                              setState(
+                                () => _activeTab = _SignInTab.passkeyCode,
+                              );
+                            },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            if (_activeTab == _SignInTab.emailPassword)
+              _buildEmailPasswordForm(p, isLoading)
+            else
+              _buildPasskeyForm(p, isLoading),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTwoFactorChallengeForm(
+    CpfPalette p,
+    PendingTwoFactorChallenge challenge,
+    bool isLoading,
+  ) {
+    final spinnerColor = p.themeId.isDark ? p.bg : Colors.white;
+    final methodLabel = challenge.method == TwoFactorLoginMethod.passkeyCode
+        ? '12-Char Passkey'
+        : 'Email & Password';
+
+    return Form(
+      key: _twoFactorFormKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: p.primary.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: p.primary.withValues(alpha: 0.35)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.security_rounded, size: 20, color: p.primary),
+                const SizedBox(width: 10),
                 Expanded(
-                  child: _TabButton(
-                    label: '12-Char Passkey',
-                    selected: _activeTab == _SignInTab.passkeyCode,
-                    onTap: isLoading
-                        ? null
-                        : () {
-                            widget.authController.clearMessages();
-                            setState(() => _activeTab = _SignInTab.passkeyCode);
-                          },
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${challenge.email} ($methodLabel)',
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w800,
+                          color: p.text,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        _useRecoveryCode
+                            ? 'Enter one of your single-use 2FA recovery codes to finish signing in.'
+                            : 'Enter the 6-digit code from your authenticator app to finish signing in.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: p.muted,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 16),
-          if (_activeTab == _SignInTab.emailPassword)
-            _buildEmailPasswordForm(p, isLoading)
+          const SizedBox(height: 14),
+          if (!_useRecoveryCode)
+            TextFormField(
+              key: const ValueKey<String>('two_factor_code_field'),
+              controller: _twoFactorCodeController,
+              enabled: !isLoading,
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(6),
+              ],
+              textInputAction: TextInputAction.done,
+              onFieldSubmitted: (_) => _submitTwoFactorChallenge(),
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                letterSpacing: 3.0,
+                fontWeight: FontWeight.w800,
+                fontSize: 17,
+              ),
+              decoration: const InputDecoration(
+                labelText: '6-Digit Authenticator Code',
+                hintText: '123456',
+                prefixIcon: Icon(Icons.pin_outlined),
+              ),
+              validator: (value) {
+                final clean = (value ?? '').trim();
+                if (clean.length != 6) {
+                  return 'Enter the 6-digit code from your authenticator app.';
+                }
+                return null;
+              },
+            )
           else
-            _buildPasskeyForm(p, isLoading),
+            TextFormField(
+              key: const ValueKey<String>('two_factor_recovery_field'),
+              controller: _recoveryCodeController,
+              enabled: !isLoading,
+              textInputAction: TextInputAction.done,
+              onFieldSubmitted: (_) => _submitTwoFactorChallenge(),
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontWeight: FontWeight.w700,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'Recovery Code',
+                hintText: 'xxxxx-xxxxx',
+                prefixIcon: Icon(Icons.vpn_key_outlined),
+              ),
+              validator: (value) {
+                if ((value ?? '').trim().isEmpty) {
+                  return 'Enter a valid recovery code.';
+                }
+                return null;
+              },
+            ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: isLoading
+                  ? null
+                  : () {
+                      widget.authController.clearMessages();
+                      setState(() => _useRecoveryCode = !_useRecoveryCode);
+                    },
+              child: Text(
+                _useRecoveryCode
+                    ? 'Use 6-digit authenticator code instead'
+                    : 'Use a recovery code instead',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          FilledButton(
+            onPressed: isLoading ? null : _submitTwoFactorChallenge,
+            child: isLoading
+                ? SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: spinnerColor,
+                    ),
+                  )
+                : const Text('Verify & Sign In'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton(
+            onPressed: isLoading ? null : _cancelTwoFactor,
+            child: const Text('Back to Sign In'),
+          ),
         ],
       ),
     );
@@ -436,33 +593,6 @@ class _PublicLandingLoginScreenState extends State<PublicLandingLoginScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: p.accent.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: p.accent.withValues(alpha: 0.35),
-              ),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.vpn_key_rounded, size: 18, color: p.accent),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'One-time 12-character claim code (e.g. ABCD-EFGH-JKLM).',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: p.text,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
           TextFormField(
             controller: _passkeyEmailController,
             enabled: !isLoading,
@@ -481,7 +611,7 @@ class _PublicLandingLoginScreenState extends State<PublicLandingLoginScreen> {
               return null;
             },
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           TextFormField(
             controller: _passkeyCodeController,
             enabled: !isLoading,
@@ -501,6 +631,7 @@ class _PublicLandingLoginScreenState extends State<PublicLandingLoginScreen> {
             decoration: InputDecoration(
               labelText: '12-Char Passkey Code',
               hintText: 'ABCD-EFGH-JKLM',
+              helperText: 'One-time 12-character claim code',
               prefixIcon: const Icon(Icons.key_rounded),
               suffixText: '$cleanLength / 12',
             ),
@@ -512,7 +643,7 @@ class _PublicLandingLoginScreenState extends State<PublicLandingLoginScreen> {
               return null;
             },
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: p.accent,
@@ -536,74 +667,29 @@ class _PublicLandingLoginScreenState extends State<PublicLandingLoginScreen> {
   }
 
   Widget _buildPrivacyFooter(BuildContext context, CpfPalette p) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: p.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: p.border),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.shield_outlined,
-            size: 20,
-            color: p.success,
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(Icons.shield_outlined, size: 15, color: p.success),
+        const SizedBox(width: 6),
+        Text(
+          'RA 10173 protected',
+          style: TextStyle(fontSize: 12, color: p.muted),
+        ),
+        Text(' • ', style: TextStyle(fontSize: 12, color: p.muted)),
+        TextButton(
+          style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            minimumSize: Size.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'Protected under RA 10173 (Data Privacy Act).',
-              style: TextStyle(fontSize: 12.5, color: p.muted),
-            ),
+          onPressed: () => showDataPrivacyModal(context),
+          child: const Text(
+            'Data Privacy',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
           ),
-          TextButton(
-            onPressed: () => showDataPrivacyModal(context),
-            child: const Text(
-              'Data Privacy',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _HeroPill extends StatelessWidget {
-  const _HeroPill({
-    required this.icon,
-    required this.label,
-    required this.palette,
-  });
-
-  final IconData icon;
-  final String label;
-  final CpfPalette palette;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: palette.heroCardElevated,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: palette.accent),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              color: palette.heroText,
-              fontSize: 11.5,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -625,17 +711,17 @@ class _TabButton extends StatelessWidget {
 
     return Material(
       color: selected ? p.card : Colors.transparent,
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(9),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(9),
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
           alignment: Alignment.center,
           child: Text(
             label,
             style: TextStyle(
-              fontSize: 13,
+              fontSize: 12.5,
               fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
               color: selected ? p.primary : p.muted,
             ),
@@ -660,22 +746,22 @@ class _NoticeBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withValues(alpha: 0.4)),
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 20, color: color),
-          const SizedBox(width: 10),
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
               message,
               style: TextStyle(
-                fontSize: 13,
+                fontSize: 12.5,
                 color: color,
                 fontWeight: FontWeight.w600,
               ),

@@ -9,11 +9,13 @@ class ApiException implements Exception {
     required this.message,
     this.statusCode,
     this.fieldErrors = const <String, List<String>>{},
+    this.twoFactorRequired = false,
   });
 
   final String message;
   final int? statusCode;
   final Map<String, List<String>> fieldErrors;
+  final bool twoFactorRequired;
 
   @override
   String toString() => message;
@@ -157,6 +159,10 @@ class ApiClient {
         }
 
         final serverMessage = data['message'] as String?;
+        final twoFactorRequired = statusCode == 422 &&
+            (data['two_factor_required'] == true ||
+                data['two_factor_required']?.toString().toLowerCase() ==
+                    'true');
         final resolvedMessage = (firstFieldError != null &&
                 firstFieldError.isNotEmpty)
             ? firstFieldError
@@ -168,6 +174,7 @@ class ApiClient {
           message: resolvedMessage,
           statusCode: statusCode,
           fieldErrors: fieldErrors,
+          twoFactorRequired: twoFactorRequired,
         );
       }
 

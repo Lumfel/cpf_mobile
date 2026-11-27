@@ -85,12 +85,15 @@ class _EventsScreenState extends State<EventsScreen> {
       _EventFilter.all => all,
       _EventFilter.active =>
         all.where((e) => e.effectiveStatus.toLowerCase() == 'active').toList(),
-      _EventFilter.upcoming => all
-          .where((e) => e.effectiveStatus.toLowerCase() == 'upcoming')
-          .toList(),
+      _EventFilter.upcoming => all.where((e) {
+          final status = e.effectiveStatus.toLowerCase();
+          return status == 'upcoming' || status == 'scheduled';
+        }).toList(),
       _EventFilter.other => all.where((e) {
           final status = e.effectiveStatus.toLowerCase();
-          return status != 'active' && status != 'upcoming';
+          return status != 'active' &&
+              status != 'upcoming' &&
+              status != 'scheduled';
         }).toList(),
     };
   }
@@ -151,10 +154,10 @@ class _EventsScreenState extends State<EventsScreen> {
       onRefresh: _loadEvents,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
         children: [
           _buildCampusBanner(p, response, canOfficerScanGlobal),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
@@ -264,10 +267,10 @@ class _EventsScreenState extends State<EventsScreen> {
         'Campus Events';
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: p.heroCard,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         border: p.themeId.isDark ? Border.all(color: p.border) : null,
       ),
       child: Row(
@@ -362,7 +365,7 @@ class _EventCard extends StatelessWidget {
   Color _effectiveStatusColor(CpfPalette p, String effectiveStatus) {
     return switch (effectiveStatus.toLowerCase()) {
       'active' => p.success,
-      'upcoming' => p.primary,
+      'upcoming' || 'scheduled' => p.primary,
       'cancelled' => p.error,
       _ => p.muted,
     };

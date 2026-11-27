@@ -314,56 +314,58 @@ abstract final class CpfThemes {
         elevation: 0,
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(16),
           side: BorderSide(color: p.border),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: p.bg,
+        isDense: true,
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 14,
+          horizontal: 14,
+          vertical: 12,
         ),
         labelStyle: TextStyle(
           color: p.muted,
+          fontSize: 13.5,
           fontWeight: FontWeight.w500,
         ),
-        hintStyle: TextStyle(color: p.muted),
+        hintStyle: TextStyle(color: p.muted, fontSize: 13.5),
         prefixIconColor: p.muted,
         suffixIconColor: p.muted,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: p.border),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: p.border),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(color: p.primary, width: 1.8),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: p.primary, width: 1.6),
         ),
         errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: p.error),
         ),
         focusedErrorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(color: p.error, width: 1.8),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: p.error, width: 1.6),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: p.primary,
           foregroundColor: onPrimary,
-          minimumSize: const Size(0, 48),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          minimumSize: const Size(0, 44),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(12),
           ),
           textStyle: const TextStyle(
-            fontSize: 15,
+            fontSize: 14.5,
             fontWeight: FontWeight.w700,
           ),
         ),
@@ -372,13 +374,13 @@ abstract final class CpfThemes {
         style: OutlinedButton.styleFrom(
           foregroundColor: p.text,
           side: BorderSide(color: p.border, width: 1.2),
-          minimumSize: const Size(0, 44),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          minimumSize: const Size(0, 40),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(12),
           ),
           textStyle: const TextStyle(
-            fontSize: 14,
+            fontSize: 13.5,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -389,6 +391,7 @@ abstract final class CpfThemes {
         ),
       ),
       navigationBarTheme: NavigationBarThemeData(
+        height: 64,
         backgroundColor: p.card,
         indicatorColor: p.primary.withValues(alpha: 0.16),
         surfaceTintColor: Colors.transparent,

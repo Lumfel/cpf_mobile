@@ -241,40 +241,40 @@ class PeerDashboardScreen extends StatelessWidget {
       onRefresh: () => _handleRefresh(context),
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
         children: [
           FadeSlideIn(child: _buildWelcomeHeader(p, profile, roleColor)),
           if (authController.isOfflineCached) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             _buildOfflineBanner(p),
           ],
           if (!profile.isGuidanceCounselorOnly &&
               (profile.user.mustChangePassword ||
                   profile.isAlumni ||
                   !profile.qrUnlocked)) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             _buildStatusAlert(p, profile),
           ],
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
           FadeSlideIn(
             child: profile.isGuidanceCounselorOnly
                 ? _buildCounselorCoordinationCard(p, profile)
                 : _buildQrCard(context, p, profile),
           ),
           if (profile.dailyQuote != null) ...[
-            const SizedBox(height: 14),
+            const SizedBox(height: 10),
             FadeSlideIn(child: _buildQuoteCard(p, profile.dailyQuote!)),
           ],
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
           Text(
             'Quick Links',
             style: TextStyle(
-              fontSize: 15,
+              fontSize: 14,
               fontWeight: FontWeight.w800,
               color: p.text,
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           _buildQuickLinks(context, p, profile),
         ],
       ),
@@ -317,16 +317,16 @@ class PeerDashboardScreen extends StatelessWidget {
     final ay = profile.campus?.currentAcademicYear;
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: p.card,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: p.border),
       ),
       child: Row(
         children: [
-          const CpfEmblem(size: 48),
-          const SizedBox(width: 12),
+          const CpfEmblem(size: 40),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -389,7 +389,7 @@ class PeerDashboardScreen extends StatelessWidget {
     final String message;
     if (profile.user.mustChangePassword) {
       message =
-          'Password update required on the CPF web portal before your Peer QR ID unlocks.';
+          'Password update required before your Peer QR ID unlocks.';
     } else if (profile.isAlumni) {
       message =
           'Former/Alumni account (${profile.effectiveRoleLabel}). Active QR attendance and officer tools are locked.';
@@ -444,13 +444,13 @@ class PeerDashboardScreen extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final qrSize =
-            (constraints.maxWidth - 88).clamp(140.0, 196.0);
+            (constraints.maxWidth - 88).clamp(136.0, 180.0);
 
         return Container(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: p.heroCard,
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(20),
             border: p.themeId.isDark ? Border.all(color: p.border) : null,
             boxShadow: [
               BoxShadow(
@@ -883,27 +883,27 @@ class _QuickLinkTile extends StatelessWidget {
 
     return Material(
       color: p.card,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         child: Container(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(14),
             border: Border.all(color: p.border),
           ),
           child: Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(10),
+                padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
                   color: accent.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(icon, color: accent, size: 22),
+                child: Icon(icon, color: accent, size: 20),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -911,16 +911,17 @@ class _QuickLinkTile extends StatelessWidget {
                     Text(
                       title,
                       style: TextStyle(
-                        fontSize: 14.5,
+                        fontSize: 13.5,
                         fontWeight: FontWeight.w700,
                         color: p.text,
                       ),
                     ),
-                    const SizedBox(height: 2),
                     Text(
                       subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 11.5,
                         color: p.muted,
                       ),
                     ),
@@ -929,6 +930,7 @@ class _QuickLinkTile extends StatelessWidget {
               ),
               Icon(
                 Icons.chevron_right_rounded,
+                size: 20,
                 color: p.muted,
               ),
             ],

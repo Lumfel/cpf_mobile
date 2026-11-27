@@ -39,6 +39,34 @@ class ElectionsService {
     }
   }
 
+  /// `PATCH /api/v1/elections/{election}/candidates/{candidate}/respond`
+  /// Allows a pending nominee to accept (`accept: true`) or decline
+  /// (`accept: false`) their nomination.
+  Future<String> respondToNomination({
+    required int electionId,
+    required int candidateId,
+    required bool accept,
+  }) async {
+    final action = accept ? 'accept' : 'decline';
+    final status = accept ? 'accepted' : 'declined';
+    try {
+      final response = await _client.dio.patch<dynamic>(
+        '/elections/$electionId/candidates/$candidateId/respond',
+        data: <String, dynamic>{
+          'action': action,
+          'decision': status,
+          'status': status,
+        },
+      );
+      final map = _client.expectJsonMap(response.data);
+      return map['nomination_status'] as String? ??
+          map['status'] as String? ??
+          status;
+    } catch (error) {
+      throw _client.toApiException(error);
+    }
+  }
+
   /// `POST /api/v1/elections/{election}/vote`
   Future<String> castVote({
     required int electionId,

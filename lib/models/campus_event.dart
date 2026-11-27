@@ -89,6 +89,10 @@ class CampusEvent {
   final MyEventAttendance myAttendance;
 
   bool get isActive => effectiveStatus.toLowerCase() == 'active';
+  bool get isUpcoming {
+    final normalized = effectiveStatus.toLowerCase();
+    return normalized == 'upcoming' || normalized == 'scheduled';
+  }
   bool get isCancelled =>
       effectiveStatus.toLowerCase() == 'cancelled' ||
       status.toLowerCase() == 'cancelled';
@@ -244,45 +248,148 @@ class ScanResult {
   }
 }
 
-/// Local per-event checklist row capturing members scanned via QR or entered
-/// manually so officers can verify Check-In and trigger one-tap Check-Out.
+/// Per-event A–Z attendance checklist row populated from
+/// `GET /api/v1/events/{event}/checklist` (with local fallback storage).
 class ManualChecklistEntry {
   const ManualChecklistEntry({
+    this.userId,
     required this.identifier,
     required this.memberName,
     this.courseYearSection,
+    this.roleLabel,
     this.loggedInAt,
     this.loggedOutAt,
     required this.lastStatus,
   });
 
+  final int? userId;
   final String identifier;
   final String memberName;
   final String? courseYearSection;
+  final String? roleLabel;
   final String? loggedInAt;
   final String? loggedOutAt;
   final String lastStatus;
 
-  bool get isCheckedIn => loggedInAt != null && loggedInAt!.isNotEmpty;
-  bool get isCheckedOut => loggedOutAt != null && loggedOutAt!.isNotEmpty;
+  bool get isCheckedIn =>
+      (loggedInAt != null && loggedInAt!.isNotEmpty) ||
+      lastStatus == 'logged_in' ||
+      lastStatus == 'already_logged_in' ||
+      lastStatus == 'completed';
+
+  bool get isCheckedOut =>
+      (loggedOutAt != null && loggedOutAt!.isNotEmpty) ||
+      lastStatus == 'logged_out' ||
+      lastStatus == 'already_logged_out' ||
+      lastStatus == 'completed';
+
+  ManualChecklistEntry copyWith({
+    int? userId,
+    String? identifier,
+    String? memberName,
+    String? courseYearSection,
+    String? roleLabel,
+    String? loggedInAt,
+    String? loggedOutAt,
+    String? lastStatus,
+  }) {
+    return ManualChecklistEntry(
+      userId: userId ?? this.userId,
+      identifier: identifier ?? this.identifier,
+      memberName: memberName ?? this.memberName,
+      courseYearSection: courseYearSection ?? this.courseYearSection,
+      roleLabel: roleLabel ?? this.roleLabel,
+      loggedInAt: loggedInAt ?? this.loggedInAt,
+      loggedOutAt: loggedOutAt ?? this.loggedOutAt,
+      lastStatus: lastStatus ?? this.lastStatus,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
+        if (userId != null) 'user_id': userId,
         'identifier': identifier,
         'member_name': memberName,
         'course_year_section': courseYearSection,
+        if (roleLabel != null) 'role_label': roleLabel,
         'logged_in_at': loggedInAt,
         'logged_out_at': loggedOutAt,
         'last_status': lastStatus,
       };
 
   factory ManualChecklistEntry.fromJson(Map<String, dynamic> json) {
+    final attendance = json['attendance'] as Map<String, dynamic>?;
+    final parsedUserId =
+        (json['user_id'] as num?)?.toInt() ?? (json['id'] as num?)?.toInt();
+    final rawIdentifier = (json['identifier'] as String?) ??
+        (json['member_id_code'] as String?) ??
+        (parsedUserId != null ? 'user:$parsedUserId' : '');
+    final rawName = (json['full_name_last_first_mi'] as String?) ??
+        (json['member_name'] as String?) ??
+        (json['name'] as String?) ??
+        'Peer Member';
+    final rawLoggedInAt = (json['logged_in_at'] as String?) ??
+        (attendance?['logged_in_at'] as String?);
+    final rawLoggedOutAt = (json['logged_out_at'] as String?) ??
+        (attendance?['logged_out_at'] as String?);
+    final rawStatus = (json['last_status'] as String?) ??
+        (json['attendance_status'] as String?) ??
+        (json['status'] as String?) ??
+        (attendance?['status'] as String?) ??
+        ((rawLoggedOutAt != null && rawLoggedOutAt.isNotEmpty)
+            ? 'completed'
+            : (rawLoggedInAt != null && rawLoggedInAt.isNotEmpty)
+                ? 'logged_in'
+                : 'not_checked_in');
+
     return ManualChecklistEntry(
-      identifier: json['identifier'] as String? ?? '',
-      memberName: json['member_name'] as String? ?? 'Peer Member',
+      userId: parsedUserId,
+      identifier: rawIdentifier,
+      memberName: rawName,
       courseYearSection: json['course_year_section'] as String?,
-      loggedInAt: json['logged_in_at'] as String?,
-      loggedOutAt: json['logged_out_at'] as String?,
-      lastStatus: json['last_status'] as String? ?? '',
+      roleLabel: json['role_label'] as String?,
+      loggedInAt: rawLoggedInAt,
+      loggedOutAt: rawLoggedOutAt,
+      lastStatus: rawStatus,
+    );
+  }
+}
+
+/// Response envelope from `GET /api/v1/events/{event}/checklist`.
+class EventChecklistResponse {
+  const EventChecklistResponse({
+    required this.entries,
+    this.loggedInCount,
+    this.loggedOutCount,
+  });
+
+  final List<ManualChecklistEntry> entries;
+  final int? loggedInCount;
+  final int? loggedOutCount;
+
+  factory EventChecklistResponse.fromJson(Map<String, dynamic> json) {
+    final rawList = (json['checklist'] as List<dynamic>?) ??
+        (json['roster'] as List<dynamic>?) ??
+        (json['members'] as List<dynamic>?) ??
+        (json['attendees'] as List<dynamic>?) ??
+        const <dynamic>[];
+    final eventJson = json['event'] as Map<String, dynamic>?;
+
+    final parsed = rawList
+        .whereType<Map<String, dynamic>>()
+        .map(ManualChecklistEntry.fromJson)
+        .toList()
+      ..sort(
+        (a, b) => a.memberName
+            .toLowerCase()
+            .compareTo(b.memberName.toLowerCase()),
+      );
+
+    return EventChecklistResponse(
+      entries: parsed,
+      loggedInCount: (json['logged_in_count'] as num?)?.toInt() ??
+          (eventJson?['logged_in_count'] as num?)?.toInt(),
+      loggedOutCount: (json['logged_out_count'] as num?)?.toInt() ??
+          (eventJson?['logged_out_count'] as num?)?.toInt(),
     );
   }
 }

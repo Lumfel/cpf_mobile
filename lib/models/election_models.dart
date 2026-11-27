@@ -121,6 +121,7 @@ class ElectionNominee {
   final int votes;
 
   bool get isAccepted => nominationStatus == 'accepted';
+  bool get isPending => nominationStatus == 'pending';
   bool get isDeclined =>
       nominationStatus == 'declined' || nominationStatus == 'rejected';
 
@@ -361,13 +362,44 @@ class ActiveElectionOverview {
         parsedCompleted?.positionResults ??
         const <String, Map<String, dynamic>>{};
 
-    return ActiveElectionOverview(
-      campusName: campus?['name'] as String?,
-      seats: rawSeats
+    final rawCompletedSeats =
+        (completedJson?['seats'] as List<dynamic>?) ?? const <dynamic>[];
+    final effectiveRawSeats =
+        rawSeats.isNotEmpty ? rawSeats : rawCompletedSeats;
+
+    List<ElectionSeat> resolvedSeats;
+    if (effectiveRawSeats.isNotEmpty) {
+      resolvedSeats = effectiveRawSeats
           .whereType<Map<String, dynamic>>()
           .map(ElectionSeat.fromJson)
           .map((seat) => seat.withFallbackResult(fallbackResults[seat.key]))
-          .toList(),
+          .toList();
+    } else if (fallbackResults.isNotEmpty) {
+      var order = 1;
+      resolvedSeats = fallbackResults.entries.map((entry) {
+        final key = entry.key;
+        final result = entry.value;
+        final label = (result['label'] as String?) ??
+            key
+                .split('_')
+                .where((part) => part.isNotEmpty)
+                .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+                .join(' ');
+        return ElectionSeat(
+          key: key,
+          label: label,
+          optional: false,
+          seatOrder: order++,
+          isCurrent: false,
+        ).withFallbackResult(result);
+      }).toList();
+    } else {
+      resolvedSeats = const <ElectionSeat>[];
+    }
+
+    return ActiveElectionOverview(
+      campusName: campus?['name'] as String?,
+      seats: resolvedSeats,
       activeElection: parsedActive,
       completedElection: parsedCompleted,
     );

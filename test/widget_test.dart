@@ -5,12 +5,15 @@ import 'package:material_ui/material_ui.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:cpf_mobile/config/api_config.dart';
 import 'package:cpf_mobile/models/auth_profile.dart';
+import 'package:cpf_mobile/models/campus_event.dart';
 import 'package:cpf_mobile/models/cpf_role.dart';
 import 'package:cpf_mobile/models/election_models.dart';
 import 'package:cpf_mobile/screens/elections_screen.dart';
+import 'package:cpf_mobile/screens/events_screen.dart';
 import 'package:cpf_mobile/screens/home_shell.dart';
 import 'package:cpf_mobile/screens/landing_login_screen.dart';
 import 'package:cpf_mobile/screens/password_change_required_screen.dart';
+import 'package:cpf_mobile/screens/payments_screen.dart';
 import 'package:cpf_mobile/screens/peer_dashboard_screen.dart';
 import 'package:cpf_mobile/services/api_client.dart';
 import 'package:cpf_mobile/services/auth_service.dart';
@@ -61,6 +64,28 @@ class _InMemorySecureStorage extends SecureStorageService {
   @override
   Future<void> writeThemeId(String themeId) async {
     _store['theme_id'] = themeId;
+  }
+
+  final Map<int, List<ManualChecklistEntry>> _checklists =
+      <int, List<ManualChecklistEntry>>{};
+
+  @override
+  Future<List<ManualChecklistEntry>> readEventChecklist(int eventId) async =>
+      List<ManualChecklistEntry>.from(
+        _checklists[eventId] ?? const <ManualChecklistEntry>[],
+      );
+
+  @override
+  Future<void> writeEventChecklist(
+    int eventId,
+    List<ManualChecklistEntry> entries,
+  ) async {
+    _checklists[eventId] = List<ManualChecklistEntry>.from(entries);
+  }
+
+  @override
+  Future<void> clearAllEventChecklists() async {
+    _checklists.clear();
   }
 }
 
@@ -567,27 +592,52 @@ void main() {
   );
 
   testWidgets(
-    'Blocking must_change_password gate triggers on 403 must_change_password_required and renders lock screen',
+    'PasswordChangeRequiredScreen submits new password via /auth/password/force-change, unlocks QR pass, and transitions into HomeShell',
     (WidgetTester tester) async {
       final apiConfig = ApiConfig();
       final storage = _InMemorySecureStorage(<String, String>{
         'token': '1|tempToken',
       });
       final themeController = ThemeController();
+      final localDb = LocalDbService(inMemoryOnly: true);
       var triggered = false;
+      RequestOptions? forceChangeRequest;
+
       final apiClient = ApiClient(
         apiConfig: apiConfig,
         storage: storage,
         onMustChangePasswordRequired: () => triggered = true,
       );
-      apiClient.dio.httpClientAdapter = _StubAdapter((_) {
-        return ResponseBody.fromString(
-          '{"code":"must_change_password_required","message":"Password change required."}',
-          403,
-          headers: {
-            Headers.contentTypeHeader: ['application/json'],
-          },
-        );
+      apiClient.dio.httpClientAdapter = _StubAdapter((options) {
+        if (options.path.endsWith('/events')) {
+          return ResponseBody.fromString(
+            '{"code":"must_change_password_required","message":"Password change required."}',
+            403,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        }
+        if (options.path.endsWith('/auth/login')) {
+          return ResponseBody.fromString(
+            '{"token_type":"Bearer","token":"1|tempToken","user":{"id":19,"name":"Reyes, Katrina M.","email":"katrina@chmsu.edu.ph","must_change_password":true},"verified_role":"member","verified_role_label":"Member","is_alumni":false,"permissions":{"is_officer_or_adviser":false,"is_club_adviser":false,"can_propose_events":false,"can_scan_attendance":false,"can_access_archive":false},"campus":{"id":1,"code":"ALIJIS","name":"CHMSU Alijis Campus","slug":"alijis","current_academic_year":"2026-2027"},"qr_unlocked":false,"member_id_code":null,"qr_payload":null}',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        }
+        if (options.path.endsWith('/auth/password/force-change')) {
+          forceChangeRequest = options;
+          return ResponseBody.fromString(
+            '{"status":"password_updated","user":{"id":19,"name":"Reyes, Katrina M.","email":"katrina@chmsu.edu.ph","must_change_password":false},"verified_role":"member","verified_role_label":"Member","is_alumni":false,"permissions":{"is_officer_or_adviser":false,"is_club_adviser":false,"can_propose_events":false,"can_scan_attendance":false,"can_access_archive":false},"campus":{"id":1,"code":"ALIJIS","name":"CHMSU Alijis Campus","slug":"alijis","current_academic_year":"2026-2027"},"qr_unlocked":true,"member_id_code":"CPF-ALIJIS-2026-0019","qr_payload":"CPF|campus:ALIJIS|user:19|role:member|sig:unlocked123"}',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        }
+        return ResponseBody.fromString('{}', 200);
       });
 
       await tester.runAsync(() async {
@@ -603,29 +653,241 @@ void main() {
         storage: storage,
         apiClient: apiClient,
         authService: AuthService(apiClient),
-        localDb: LocalDbService(inMemoryOnly: true),
+        localDb: localDb,
       );
-      authController.markPasswordChangeRequired();
+      await tester.runAsync(
+        () => authController.signInWithEmail(
+          email: 'katrina@chmsu.edu.ph',
+          password: 'TempPassword1!',
+        ),
+      );
       expect(authController.requiresPasswordChange, isTrue);
+      expect(authController.profile?.qrUnlocked, isFalse);
 
       await tester.pumpWidget(
-        MaterialApp(
-          theme: themeController.themeData,
-          home: PasswordChangeRequiredScreen(
-            authController: authController,
-            apiConfig: apiConfig,
-            themeController: themeController,
-            storage: storage,
-          ),
+        ListenableBuilder(
+          listenable: authController,
+          builder: (context, _) {
+            return MaterialApp(
+              theme: themeController.themeData,
+              home: authController.requiresPasswordChange
+                  ? PasswordChangeRequiredScreen(
+                      authController: authController,
+                      apiConfig: apiConfig,
+                      themeController: themeController,
+                      storage: storage,
+                    )
+                  : HomeShell(
+                      authController: authController,
+                      eventsService: EventsService(apiClient),
+                      paymentService: MembershipPaymentService(apiClient),
+                      electionsService: ElectionsService(apiClient),
+                      storage: storage,
+                      themeController: themeController,
+                    ),
+            );
+          },
         ),
       );
       await tester.pumpAndSettle();
 
       expect(find.text('Password Change Required'), findsOneWidget);
-      expect(find.text('Refresh Status'), findsOneWidget);
+      expect(find.text('Update Password & Continue'), findsOneWidget);
       expect(find.text('Sign Out'), findsOneWidget);
+
+      // Verify validation catches mismatched passwords before hitting API.
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('force_new_password_field')),
+        'PersonalSecret2026!',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('force_confirm_password_field')),
+        'DifferentSecret2026!',
+      );
+      await tester.ensureVisible(find.text('Update Password & Continue'));
+      await tester.tap(find.text('Update Password & Continue'));
+      await tester.pumpAndSettle();
+      expect(find.text('Passwords do not match.'), findsOneWidget);
+      expect(forceChangeRequest, isNull);
+
+      // Submit matching valid password and transition cleanly into HomeShell.
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('force_confirm_password_field')),
+        'PersonalSecret2026!',
+      );
+      await tester.ensureVisible(find.text('Update Password & Continue'));
+      await tester.tap(find.text('Update Password & Continue'));
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pumpAndSettle();
+
+      expect(forceChangeRequest, isNotNull);
+      expect(
+        forceChangeRequest?.headers['Authorization'],
+        'Bearer 1|tempToken',
+      );
+      expect(
+        forceChangeRequest?.data,
+        <String, dynamic>{
+          'password': 'PersonalSecret2026!',
+          'password_confirmation': 'PersonalSecret2026!',
+        },
+      );
+      expect(authController.requiresPasswordChange, isFalse);
+      expect(authController.profile?.user.mustChangePassword, isFalse);
+      expect(authController.profile?.qrUnlocked, isTrue);
+
+      final cached = await localDb.readCachedProfile();
+      expect(cached?.user.mustChangePassword, isFalse);
+      expect(cached?.qrUnlocked, isTrue);
+      expect(cached?.qrPayload, 'CPF|campus:ALIJIS|user:19|role:member|sig:unlocked123');
+
+      expect(find.byType(HomeShell), findsOneWidget);
+      expect(find.byType(QrImageView), findsOneWidget);
     },
   );
+
+  group('Two-Factor Authentication (two_factor_required) login & passkey flow', () {
+    test(
+      'detects HTTP 422 two_factor_required on email login and retries with 6-digit code',
+      () async {
+        final apiConfig = ApiConfig();
+        final storage = _InMemorySecureStorage();
+        final apiClient = ApiClient(apiConfig: apiConfig, storage: storage);
+        final sentPayloads = <Map<String, dynamic>>[];
+
+        apiClient.dio.httpClientAdapter = _StubAdapter((options) {
+          final body = Map<String, dynamic>.from(options.data as Map);
+          sentPayloads.add(body);
+
+          if (body['code'] == null) {
+            return ResponseBody.fromString(
+              '{"message":"Two-factor authentication code is required.","two_factor_required":true,"errors":{"code":["Enter your 6-digit code."]}}',
+              422,
+              headers: {
+                Headers.contentTypeHeader: ['application/json'],
+              },
+            );
+          }
+
+          if (body['code'] != '654321') {
+            return ResponseBody.fromString(
+              '{"message":"The provided two-factor authentication code was invalid.","two_factor_required":true}',
+              422,
+              headers: {
+                Headers.contentTypeHeader: ['application/json'],
+              },
+            );
+          }
+
+          return ResponseBody.fromString(
+            '{"token_type":"Bearer","token":"2|verified2fa","user":{"id":12,"name":"Mercado, Sofia R.","email":"sofia@chmsu.edu.ph","must_change_password":false},"verified_role":"president","verified_role_label":"President","is_alumni":false,"permissions":{"is_officer_or_adviser":true,"is_club_adviser":false,"can_propose_events":true,"can_scan_attendance":true,"can_access_archive":true},"campus":{"id":1,"code":"ALIJIS","name":"CHMSU Alijis Campus","slug":"alijis","current_academic_year":"2026-2027"},"qr_unlocked":true,"member_id_code":"CPF-ALIJIS-2026-0012","qr_payload":"CPF|campus:ALIJIS|user:12|role:president|sig:2faok"}',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        });
+
+        final authController = AuthController(
+          apiConfig: apiConfig,
+          storage: storage,
+          apiClient: apiClient,
+          authService: AuthService(apiClient),
+          localDb: LocalDbService(inMemoryOnly: true),
+        );
+
+        final firstAttempt = await authController.signInWithEmail(
+          email: 'sofia@chmsu.edu.ph',
+          password: 'PersonalSecret2026!',
+        );
+        expect(firstAttempt, isFalse);
+        expect(authController.isTwoFactorRequired, isTrue);
+        expect(authController.errorMessage, isNull);
+        expect(authController.isAuthenticated, isFalse);
+
+        // Wrong code keeps 2FA challenge open with server error message.
+        final wrongCodeAttempt =
+            await authController.submitTwoFactorChallenge(code: '000000');
+        expect(wrongCodeAttempt, isFalse);
+        expect(authController.isTwoFactorRequired, isTrue);
+        expect(authController.errorMessage, contains('invalid'));
+
+        // Valid 6-digit code completes login and clears pending challenge.
+        final verifiedAttempt =
+            await authController.submitTwoFactorChallenge(code: '654321');
+        expect(verifiedAttempt, isTrue);
+        expect(authController.isTwoFactorRequired, isFalse);
+        expect(authController.isAuthenticated, isTrue);
+        expect(await storage.readToken(), '2|verified2fa');
+        expect(sentPayloads.length, 3);
+        expect(sentPayloads.last['code'], '654321');
+        expect(sentPayloads.last.containsKey('recovery_code'), isFalse);
+      },
+    );
+
+    test(
+      'detects HTTP 422 two_factor_required on passkey claim and retries with recovery_code',
+      () async {
+        final apiConfig = ApiConfig();
+        final storage = _InMemorySecureStorage();
+        final apiClient = ApiClient(apiConfig: apiConfig, storage: storage);
+        final sentPayloads = <Map<String, dynamic>>[];
+
+        apiClient.dio.httpClientAdapter = _StubAdapter((options) {
+          final body = Map<String, dynamic>.from(options.data as Map);
+          sentPayloads.add(body);
+
+          if (body['recovery_code'] != 'recov-998877') {
+            return ResponseBody.fromString(
+              '{"message":"Two-factor verification required.","two_factor_required":true}',
+              422,
+              headers: {
+                Headers.contentTypeHeader: ['application/json'],
+              },
+            );
+          }
+
+          return ResponseBody.fromString(
+            '{"token_type":"Bearer","token":"3|passkey2fa","user":{"id":19,"name":"Reyes, Katrina M.","email":"katrina@chmsu.edu.ph","must_change_password":true},"verified_role":"member","verified_role_label":"Member","is_alumni":false,"permissions":{"is_officer_or_adviser":false,"is_club_adviser":false,"can_propose_events":false,"can_scan_attendance":false,"can_access_archive":false},"campus":{"id":1,"code":"ALIJIS","name":"CHMSU Alijis Campus","slug":"alijis","current_academic_year":"2026-2027"},"qr_unlocked":false,"member_id_code":null,"qr_payload":null}',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        });
+
+        final authController = AuthController(
+          apiConfig: apiConfig,
+          storage: storage,
+          apiClient: apiClient,
+          authService: AuthService(apiClient),
+          localDb: LocalDbService(inMemoryOnly: true),
+        );
+
+        final firstAttempt = await authController.signInWithPasskey(
+          email: 'katrina@chmsu.edu.ph',
+          passkeyCode: 'ABCD-EFGH-JKLM',
+        );
+        expect(firstAttempt, isFalse);
+        expect(authController.isTwoFactorRequired, isTrue);
+        expect(
+          authController.pendingTwoFactor?.method,
+          TwoFactorLoginMethod.passkeyCode,
+        );
+
+        final secondAttempt = await authController.submitTwoFactorChallenge(
+          recoveryCode: 'recov-998877',
+        );
+        expect(secondAttempt, isTrue);
+        expect(authController.isTwoFactorRequired, isFalse);
+        expect(authController.isAuthenticated, isTrue);
+        expect(authController.requiresPasswordChange, isTrue);
+        expect(sentPayloads.last['passkey_code'], 'ABCD-EFGH-JKLM');
+        expect(sentPayloads.last['recovery_code'], 'recov-998877');
+        expect(sentPayloads.last.containsKey('code'), isFalse);
+      },
+    );
+  });
 
   testWidgets(
     'ElectionsScreen handles vacant seats, paused/completed chat wipe, and silent /auth/me role refresh',
@@ -789,4 +1051,492 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+    'EventsScreen treats both scheduled and upcoming events as Upcoming [L-01]',
+    (WidgetTester tester) async {
+      final apiConfig = ApiConfig();
+      final storage = _InMemorySecureStorage(<String, String>{
+        'token': '1|memberToken',
+      });
+      final apiClient = ApiClient(apiConfig: apiConfig, storage: storage);
+      apiClient.dio.httpClientAdapter = _StubAdapter((options) {
+        return ResponseBody.fromString(
+          '{"campus":{"id":1,"code":"ALIJIS","name":"CHMSU Alijis Campus"},"can_scan_events":false,"events":[{"id":1,"title":"Scheduled Seminar","location":"AVR","event_date":"2026-12-01","event_date_label":"Dec 1, 2026","start_time":"09:00","end_time":"11:00","status":"approved","effective_status":"scheduled","reflection_enabled":false,"logged_in_count":0,"logged_out_count":0,"can_scan":false,"my_attendance":{"status":"not_checked_in"}},{"id":2,"title":"Upcoming Workshop","location":"Room 102","event_date":"2026-12-05","event_date_label":"Dec 5, 2026","start_time":"13:00","end_time":"15:00","status":"approved","effective_status":"upcoming","reflection_enabled":false,"logged_in_count":0,"logged_out_count":0,"can_scan":false,"my_attendance":{"status":"not_checked_in"}},{"id":3,"title":"Active Assembly","location":"Gym","event_date":"2026-11-26","event_date_label":"Nov 26, 2026","start_time":"08:00","end_time":"17:00","status":"approved","effective_status":"active","reflection_enabled":false,"logged_in_count":10,"logged_out_count":0,"can_scan":true,"my_attendance":{"status":"logged_in"}},{"id":4,"title":"Completed Orientation","location":"Hall","event_date":"2026-10-01","event_date_label":"Oct 1, 2026","start_time":"08:00","end_time":"10:00","status":"approved","effective_status":"completed","reflection_enabled":false,"logged_in_count":20,"logged_out_count":20,"can_scan":false,"my_attendance":{"status":"completed"}}]}',
+          200,
+          headers: {
+            Headers.contentTypeHeader: ['application/json'],
+          },
+        );
+      });
+
+      final authController = AuthController(
+        apiConfig: apiConfig,
+        storage: storage,
+        apiClient: apiClient,
+        authService: AuthService(apiClient),
+        localDb: LocalDbService(inMemoryOnly: true),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: CpfThemes.themeDataFor(CpfThemeId.light),
+          home: Scaffold(
+            body: EventsScreen(
+              authController: authController,
+              eventsService: EventsService(apiClient),
+              storage: storage,
+            ),
+          ),
+        ),
+      );
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pumpAndSettle();
+
+      // Tap Upcoming filter -> shows both 'scheduled' and 'upcoming' events.
+      await tester.tap(find.text('Upcoming'));
+      await tester.pumpAndSettle();
+      expect(find.text('Scheduled Seminar'), findsOneWidget);
+      expect(find.text('Upcoming Workshop'), findsOneWidget);
+      expect(find.text('Active Assembly'), findsNothing);
+      expect(find.text('Completed Orientation'), findsNothing);
+
+      // Tap Past / Other filter -> excludes scheduled & upcoming.
+      await tester.tap(find.text('Past / Other'));
+      await tester.pumpAndSettle();
+      expect(find.text('Completed Orientation'), findsOneWidget);
+      expect(find.text('Scheduled Seminar'), findsNothing);
+      expect(find.text('Upcoming Workshop'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'ElectionsScreen renders completed_election when active_election is null and supports pending nominee Accept/Decline [H-07]',
+    (WidgetTester tester) async {
+      final apiConfig = ApiConfig();
+      final storage = _InMemorySecureStorage(<String, String>{
+        'token': '1|memberToken',
+      });
+      final apiClient = ApiClient(apiConfig: apiConfig, storage: storage);
+
+      var mode = 'completed_only';
+      RequestOptions? respondRequest;
+
+      apiClient.dio.httpClientAdapter = _StubAdapter((options) {
+        if (options.path.endsWith('/auth/login') ||
+            options.path.endsWith('/auth/me')) {
+          return ResponseBody.fromString(
+            '{"token_type":"Bearer","token":"1|memberToken","user":{"id":19,"name":"Reyes, Katrina M.","email":"katrina@chmsu.edu.ph","must_change_password":false},"verified_role":"member","verified_role_label":"Member","is_alumni":false,"permissions":{"is_officer_or_adviser":false,"is_club_adviser":false,"can_propose_events":false,"can_scan_attendance":false,"can_access_archive":false},"campus":{"id":1,"code":"ALIJIS","name":"CHMSU Alijis Campus","slug":"alijis","current_academic_year":"2026-2027"},"qr_unlocked":true,"member_id_code":"CPF-ALIJIS-2026-0019","qr_payload":"CPF|campus:ALIJIS|user:19|role:member|sig:abc"}',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        }
+
+        if (options.path.contains('/candidates/77/respond')) {
+          respondRequest = options;
+          mode = 'accepted';
+          return ResponseBody.fromString(
+            '{"status":"accepted","nomination_status":"accepted"}',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        }
+
+        if (options.path.endsWith('/elections/active')) {
+          if (mode == 'completed_only') {
+            return ResponseBody.fromString(
+              '{"campus":{"id":1,"code":"ALIJIS","name":"CHMSU Alijis Campus"},"seats":[],"active_election":null,"completed_election":{"id":10,"title":"AY 2026-2027 Finalized Election","academic_year":"2026-2027","status":"completed","current_phase":"completed","round_number":1,"position_results":{"president":{"status":"elected","winner_user_id":12,"winner_name":"Mercado, Sofia R."},"auditor":{"status":"vacant"}}}}',
+              200,
+              headers: {
+                Headers.contentTypeHeader: ['application/json'],
+              },
+            );
+          }
+
+          final nomStatus = mode == 'accepted' ? 'accepted' : 'pending';
+          return ResponseBody.fromString(
+            '{"campus":{"id":1,"code":"ALIJIS","name":"CHMSU Alijis Campus"},"seats":[{"key":"president","label":"President","optional":false,"seat_order":1,"is_current":true,"result":null}],"active_election":{"id":11,"title":"AY 2026-2027 Open Election","academic_year":"2026-2027","status":"open","current_position":"president","current_position_label":"President","current_phase":"nomination","round_number":1,"nominees":[],"current_position_nominees":[{"id":77,"user_id":19,"name":"Reyes, Katrina M.","course_year_section":"BSIT 4A","position":"president","nomination_status":"$nomStatus","is_tie_contender":false,"votes":0}],"voting_status":{"can_nominate":false,"can_vote":false,"has_voted_current_round":false,"has_opted_out":false},"live_chat":{"enabled":true}}}',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        }
+
+        return ResponseBody.fromString('{}', 200);
+      });
+
+      final authController = AuthController(
+        apiConfig: apiConfig,
+        storage: storage,
+        apiClient: apiClient,
+        authService: AuthService(apiClient),
+        localDb: LocalDbService(inMemoryOnly: true),
+      );
+      await tester.runAsync(
+        () => authController.signInWithEmail(
+          email: 'katrina@chmsu.edu.ph',
+          password: 'secret',
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: CpfThemes.themeDataFor(CpfThemeId.light),
+          home: Scaffold(
+            body: ElectionsScreen(
+              authController: authController,
+              electionsService: ElectionsService(apiClient),
+            ),
+          ),
+        ),
+      );
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pumpAndSettle();
+
+      // Renders completed_election slate even though active_election is null.
+      expect(find.text('ELECTION COMPLETED'), findsOneWidget);
+      expect(find.text('AY 2026-2027 Finalized Election'), findsOneWidget);
+      expect(find.text('Mercado, Sofia R.'), findsOneWidget);
+      expect(find.text('Vacant'), findsOneWidget);
+
+      // Switch backend to an open election with a pending nomination for user 19.
+      mode = 'pending_nominee';
+      await tester.drag(find.byType(ListView), const Offset(0, 300));
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Accept'), findsOneWidget);
+      expect(find.text('Decline'), findsOneWidget);
+
+      await tester.tap(find.text('Accept'));
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(respondRequest, isNotNull);
+      expect(
+        respondRequest?.path,
+        '/elections/11/candidates/77/respond',
+      );
+      expect(respondRequest?.method, 'PATCH');
+      expect(
+        (respondRequest?.data as Map<String, dynamic>?)?['decision'],
+        'accepted',
+      );
+      expect(find.text('Accept'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'PaymentsScreen attaches receipt image bytes and displays receipt badges [H-04]',
+    (WidgetTester tester) async {
+      final apiConfig = ApiConfig();
+      final storage = _InMemorySecureStorage(<String, String>{
+        'token': '1|memberToken',
+      });
+      final apiClient = ApiClient(apiConfig: apiConfig, storage: storage);
+      RequestOptions? submitRequest;
+
+      apiClient.dio.httpClientAdapter = _StubAdapter((options) {
+        if (options.path.endsWith('/payments')) {
+          return ResponseBody.fromString(
+            '{"campus":{"id":1,"code":"ALIJIS","name":"CHMSU Alijis Campus"},"my_dues_status":{"has_paid_dues":false},"permissions":{"can_validate_payments":false,"can_audit_finances":false},"destinations":[{"id":1,"channel":"GCash","account_name":"CPF Alijis","account_number":"0917-000-1111"}],"my_submissions":[{"id":9,"user_id":19,"member_name":"Reyes, Katrina M.","destination_id":1,"channel":"GCash","purpose":"Membership Dues","amount":100,"reference_number":"GCASH-111","has_receipt":true,"status":"pending"}],"validation_queue":[]}',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        }
+        if (options.path.endsWith('/payments/submit')) {
+          submitRequest = options;
+          return ResponseBody.fromString('{"status":"submitted"}', 201);
+        }
+        return ResponseBody.fromString('{}', 200);
+      });
+
+      final authController = AuthController(
+        apiConfig: apiConfig,
+        storage: storage,
+        apiClient: apiClient,
+        authService: AuthService(apiClient),
+        localDb: LocalDbService(inMemoryOnly: true),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: CpfThemes.themeDataFor(CpfThemeId.light),
+          home: Scaffold(
+            body: PaymentsScreen(
+              authController: authController,
+              paymentService: MembershipPaymentService(apiClient),
+              pickReceiptImage: () async => PickedReceiptImage(
+                bytes: Uint8List.fromList(<int>[137, 80, 78, 71, 13, 10, 26, 10]),
+                fileName: 'gcash_receipt.png',
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('Attach Receipt Screenshot'));
+      await tester.tap(find.text('Attach Receipt Screenshot'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('ATTACHED'), findsOneWidget);
+      expect(find.text('gcash_receipt.png'), findsOneWidget);
+
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Reference No.'),
+        'GCASH-778899',
+      );
+      await tester.ensureVisible(find.text('Submit Payment'));
+      await tester.tap(find.text('Submit Payment'));
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pumpAndSettle();
+
+      expect(submitRequest, isNotNull);
+      expect(submitRequest?.data, isA<FormData>());
+      expect(find.text('Receipt Uploaded'), findsOneWidget);
+    },
+  );
+
+  group('Manual checklist & shared-device / offline QR hygiene [L-02, M-05]', () {
+    test('EventsService fetches A–Z checklist and posts manual-attendance', () async {
+      final apiConfig = ApiConfig();
+      final storage = _InMemorySecureStorage(<String, String>{
+        'token': '1|officerToken',
+      });
+      final apiClient = ApiClient(apiConfig: apiConfig, storage: storage);
+      RequestOptions? manualReq;
+
+      apiClient.dio.httpClientAdapter = _StubAdapter((options) {
+        if (options.path.endsWith('/events/4/checklist')) {
+          return ResponseBody.fromString(
+            '{"logged_in_count":1,"logged_out_count":0,"checklist":[{"user_id":2,"full_name_last_first_mi":"Santos, Marco P.","course_year_section":"BSIT 3A","logged_in_at":null,"logged_out_at":null},{"user_id":1,"full_name_last_first_mi":"Alvarez, Hannah G.","course_year_section":"BSIT 4A","logged_in_at":"2026-11-26T09:00:00Z","logged_out_at":null}]}',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        }
+        if (options.path.endsWith('/events/4/manual-attendance')) {
+          manualReq = options;
+          return ResponseBody.fromString(
+            '{"status":"logged_in","member_name":"Santos, Marco P.","course_year_section":"BSIT 3A","attendance":{"id":10,"campus_event_id":4,"user_id":2,"logged_in_at":"2026-11-26T09:10:00Z"}}',
+            201,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        }
+        return ResponseBody.fromString('{}', 200);
+      });
+
+      final service = EventsService(apiClient);
+      final checklist = await service.fetchEventChecklist(4);
+      expect(checklist.entries.length, 2);
+      expect(checklist.entries.first.memberName, 'Alvarez, Hannah G.');
+      expect(checklist.entries.first.isCheckedIn, isTrue);
+      expect(checklist.entries.last.memberName, 'Santos, Marco P.');
+
+      final res = await service.recordManualAttendance(
+        eventId: 4,
+        userId: 2,
+        scanType: 'login',
+      );
+      expect(res.status, 'logged_in');
+      expect(manualReq?.data, <String, dynamic>{
+        'user_id': 2,
+        'scan_type': 'login',
+      });
+    });
+
+    test('signOut and handleUnauthorized clear event checklists and LocalDbService expires QR cache after 7 days', () async {
+      final apiConfig = ApiConfig();
+      final storage = _InMemorySecureStorage(<String, String>{
+        'token': '1|sharedToken',
+      });
+      await storage.writeEventChecklist(
+        4,
+        const <ManualChecklistEntry>[
+          ManualChecklistEntry(
+            userId: 2,
+            identifier: 'CPF-1',
+            memberName: 'Santos, Marco P.',
+            lastStatus: 'logged_in',
+          ),
+        ],
+      );
+      expect((await storage.readEventChecklist(4)).length, 1);
+
+      var now = DateTime(2026, 11, 20, 9, 0);
+      final localDb = LocalDbService(inMemoryOnly: true, clock: () => now);
+      final sampleProfile = AuthProfile.fromJson(<String, dynamic>{
+        'user': <String, dynamic>{
+          'id': 12,
+          'name': 'Mercado, Sofia R.',
+          'email': 'sofia@chmsu.edu.ph',
+          'must_change_password': false,
+        },
+        'verified_role': 'president',
+        'is_alumni': false,
+        'qr_unlocked': true,
+        'qr_payload': 'CPF|campus:ALIJIS|user:12|role:president|sig:valid',
+      });
+
+      await localDb.cacheProfile(sampleProfile);
+      now = now.add(const Duration(days: 6, hours: 23));
+      expect(await localDb.readCachedProfile(), isNotNull);
+      expect(localDb.lastReadWasStale, isFalse);
+
+      // Advance past 7 days -> offline QR cache is rejected & wiped.
+      now = now.add(const Duration(hours: 2));
+      expect(await localDb.readCachedProfile(), isNull);
+      expect(localDb.lastReadWasStale, isTrue);
+
+      final apiClient = ApiClient(apiConfig: apiConfig, storage: storage);
+      apiClient.dio.httpClientAdapter = _StubAdapter(
+        (_) => ResponseBody.fromString('{"status":"logged_out"}', 200),
+      );
+      final authController = AuthController(
+        apiConfig: apiConfig,
+        storage: storage,
+        apiClient: apiClient,
+        authService: AuthService(apiClient),
+        localDb: localDb,
+      );
+
+      await authController.signOut();
+      expect(await storage.readEventChecklist(4), isEmpty);
+
+      // Also verify handleUnauthorized clears checklists.
+      await storage.writeEventChecklist(
+        5,
+        const <ManualChecklistEntry>[
+          ManualChecklistEntry(
+            userId: 3,
+            identifier: 'CPF-2',
+            memberName: 'Reyes, Katrina M.',
+            lastStatus: 'logged_in',
+          ),
+        ],
+      );
+      authController.handleUnauthorized();
+      await Future<void>.delayed(Duration.zero);
+      expect(await storage.readEventChecklist(5), isEmpty);
+    });
+
+    test('ElectionsService.respondToNomination sends accepted/declined decision payload [HIGH-05]', () async {
+      final apiConfig = ApiConfig();
+      final storage = _InMemorySecureStorage(<String, String>{
+        'token': '1|memberToken',
+      });
+      final apiClient = ApiClient(apiConfig: apiConfig, storage: storage);
+      final sentPayloads = <Map<String, dynamic>>[];
+
+      apiClient.dio.httpClientAdapter = _StubAdapter((options) {
+        final body = Map<String, dynamic>.from(options.data as Map);
+        sentPayloads.add(body);
+        return ResponseBody.fromString(
+          '{"nomination_status":"${body['decision']}"}',
+          200,
+          headers: {
+            Headers.contentTypeHeader: ['application/json'],
+          },
+        );
+      });
+
+      final service = ElectionsService(apiClient);
+      final acceptedStatus = await service.respondToNomination(
+        electionId: 11,
+        candidateId: 77,
+        accept: true,
+      );
+      final declinedStatus = await service.respondToNomination(
+        electionId: 11,
+        candidateId: 78,
+        accept: false,
+      );
+
+      expect(acceptedStatus, 'accepted');
+      expect(declinedStatus, 'declined');
+      expect(sentPayloads[0]['decision'], 'accepted');
+      expect(sentPayloads[0]['status'], 'accepted');
+      expect(sentPayloads[1]['decision'], 'declined');
+      expect(sentPayloads[1]['status'], 'declined');
+    });
+
+    test('AuthController._persistSession clears leftover event checklists on sign-in [MEDIUM-04]', () async {
+      final apiConfig = ApiConfig();
+      final storage = _InMemorySecureStorage();
+      await storage.writeEventChecklist(
+        42,
+        const <ManualChecklistEntry>[
+          ManualChecklistEntry(
+            userId: 9,
+            identifier: 'CPF-PREV-009',
+            memberName: 'Previous Officer Roster Entry',
+            lastStatus: 'logged_in',
+          ),
+        ],
+      );
+      expect((await storage.readEventChecklist(42)).length, 1);
+
+      final apiClient = ApiClient(apiConfig: apiConfig, storage: storage);
+      apiClient.dio.httpClientAdapter = _StubAdapter((options) {
+        return ResponseBody.fromString(
+          '{"token_type":"Bearer","token":"9|freshOfficerToken","user":{"id":22,"name":"Cruz, Paolo D.","email":"paolo@chmsu.edu.ph","must_change_password":false},"verified_role":"secretary","verified_role_label":"Secretary","is_alumni":false,"permissions":{"is_officer_or_adviser":true,"is_club_adviser":false,"can_propose_events":true,"can_scan_attendance":true,"can_access_archive":true},"campus":{"id":1,"code":"ALIJIS","name":"CHMSU Alijis Campus","slug":"alijis","current_academic_year":"2026-2027"},"qr_unlocked":true,"member_id_code":"CPF-ALIJIS-2026-0022","qr_payload":"CPF|campus:ALIJIS|user:22|role:secretary|sig:fresh"}',
+          200,
+          headers: {
+            Headers.contentTypeHeader: ['application/json'],
+          },
+        );
+      });
+
+      final authController = AuthController(
+        apiConfig: apiConfig,
+        storage: storage,
+        apiClient: apiClient,
+        authService: AuthService(apiClient),
+        localDb: LocalDbService(inMemoryOnly: true),
+      );
+
+      final okEmail = await authController.signInWithEmail(
+        email: 'paolo@chmsu.edu.ph',
+        password: 'Password123!',
+      );
+      expect(okEmail, isTrue);
+      expect(await storage.readEventChecklist(42), isEmpty);
+      expect(await storage.readToken(), '9|freshOfficerToken');
+
+      // Also verify passkey sign-in clears leftover checklists via _persistSession.
+      await storage.writeEventChecklist(
+        43,
+        const <ManualChecklistEntry>[
+          ManualChecklistEntry(
+            userId: 10,
+            identifier: 'CPF-PREV-010',
+            memberName: 'Another Leftover Entry',
+            lastStatus: 'completed',
+          ),
+        ],
+      );
+      expect((await storage.readEventChecklist(43)).length, 1);
+
+      final okPasskey = await authController.signInWithPasskey(
+        email: 'paolo@chmsu.edu.ph',
+        passkeyCode: 'ABCD-EFGH-JKLM',
+      );
+      expect(okPasskey, isTrue);
+      expect(await storage.readEventChecklist(43), isEmpty);
+    });
+  });
 }

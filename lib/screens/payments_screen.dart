@@ -1,4 +1,5 @@
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:cpf_mobile/models/membership_payment.dart';
 import 'package:cpf_mobile/screens/messenger_gc_checklist_screen.dart';
@@ -7,6 +8,17 @@ import 'package:cpf_mobile/services/membership_payment_service.dart';
 import 'package:cpf_mobile/state/auth_controller.dart';
 import 'package:cpf_mobile/theme/cpf_themes.dart';
 import 'package:cpf_mobile/widgets/animated_entrance.dart';
+
+/// Selected payment receipt image bytes and filename for multipart upload.
+class PickedReceiptImage {
+  const PickedReceiptImage({
+    required this.bytes,
+    required this.fileName,
+  });
+
+  final Uint8List bytes;
+  final String fileName;
+}
 
 enum _PaymentsTab { memberSubmit, treasurerQueue }
 
@@ -17,27 +29,35 @@ class PaymentsScreen extends StatefulWidget {
     super.key,
     required this.authController,
     required this.paymentService,
+    this.pickReceiptImage,
   });
 
   final AuthController authController;
   final MembershipPaymentService paymentService;
+  final Future<PickedReceiptImage?> Function()? pickReceiptImage;
 
   @override
   State<PaymentsScreen> createState() => _PaymentsScreenState();
 }
 
 class _PaymentsScreenState extends State<PaymentsScreen> {
+  static const int _maxReceiptBytes = 5 * 1024 * 1024; // 5 MB backend limit
+
   final _formKey = GlobalKey<FormState>();
   final _purposeController =
       TextEditingController(text: 'Membership Dues');
   final _amountController = TextEditingController(text: '100');
   final _referenceController = TextEditingController();
+  final ImagePicker _imagePicker = ImagePicker();
 
   PaymentsOverview? _overview;
   bool _isLoading = true;
   bool _isSubmitting = false;
+  bool _isPickingReceipt = false;
   String? _errorMessage;
   int? _selectedDestinationId;
+  Uint8List? _receiptBytes;
+  String? _receiptFileName;
   _PaymentsTab _activeTab = _PaymentsTab.memberSubmit;
   final Set<int> _validatingIds = <int>{};
 
@@ -83,6 +103,72 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
     }
   }
 
+  Future<void> _pickReceiptScreenshot() async {
+    if (_isPickingReceipt || _isSubmitting) return;
+    setState(() => _isPickingReceipt = true);
+
+    try {
+      PickedReceiptImage? picked;
+      if (widget.pickReceiptImage != null) {
+        picked = await widget.pickReceiptImage!();
+      } else {
+        final file = await _imagePicker.pickImage(
+          source: ImageSource.gallery,
+          maxWidth: 1600,
+          imageQuality: 85,
+        );
+        if (file != null) {
+          final bytes = await file.readAsBytes();
+          final name = file.name.trim().isNotEmpty
+              ? file.name.trim()
+              : 'receipt.jpg';
+          picked = PickedReceiptImage(bytes: bytes, fileName: name);
+        }
+      }
+
+      if (!mounted || picked == null) return;
+
+      if (picked.bytes.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Selected receipt image is empty.')),
+        );
+        return;
+      }
+
+      if (picked.bytes.length > _maxReceiptBytes) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Receipt image exceeds the 5 MB upload limit.'),
+          ),
+        );
+        return;
+      }
+
+      setState(() {
+        _receiptBytes = picked!.bytes;
+        _receiptFileName = picked.fileName;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to open photo picker on this device.'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isPickingReceipt = false);
+      }
+    }
+  }
+
+  String _formatFileSize(int bytes) {
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / 1024).ceil()} KB';
+  }
+
   Future<void> _submitPayment() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     final destinationId = _selectedDestinationId;
@@ -103,9 +189,15 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
         purpose: _purposeController.text,
         amount: amount,
         referenceNumber: _referenceController.text,
+        receiptBytes: _receiptBytes,
+        receiptFileName: _receiptFileName,
       );
       if (!mounted) return;
       _referenceController.clear();
+      setState(() {
+        _receiptBytes = null;
+        _receiptFileName = null;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Payment submitted for Treasurer validation.'),
@@ -471,6 +563,8 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 12),
+                  _buildReceiptPickerBox(p),
                   const SizedBox(height: 14),
                   FilledButton.icon(
                     onPressed: _isSubmitting ? null : _submitPayment,
@@ -520,6 +614,147 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
             const SizedBox(height: 8),
           ],
       ],
+    );
+  }
+
+  Widget _buildReceiptPickerBox(CpfPalette p) {
+    final hasReceipt = _receiptBytes != null && _receiptBytes!.isNotEmpty;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: p.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: hasReceipt ? p.success.withValues(alpha: 0.55) : p.border,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(
+                hasReceipt
+                    ? Icons.check_circle_rounded
+                    : Icons.add_photo_alternate_outlined,
+                size: 18,
+                color: hasReceipt ? p.success : p.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  hasReceipt
+                      ? 'Receipt Screenshot Ready'
+                      : 'GCash / Maya Receipt Screenshot',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: p.text,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: (hasReceipt ? p.success : p.muted)
+                      .withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  hasReceipt ? 'ATTACHED' : 'OPTIONAL',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    color: hasReceipt ? p.success : p.muted,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (hasReceipt) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.memory(
+                    _receiptBytes!,
+                    width: 44,
+                    height: 44,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => Container(
+                      width: 44,
+                      height: 44,
+                      color: p.card,
+                      alignment: Alignment.center,
+                      child: Icon(Icons.receipt_outlined, color: p.primary),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _receiptFileName ?? 'receipt.jpg',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: p.text,
+                        ),
+                      ),
+                      Text(
+                        _formatFileSize(_receiptBytes!.length),
+                        style: TextStyle(fontSize: 11.5, color: p.muted),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Remove receipt',
+                  onPressed: _isSubmitting
+                      ? null
+                      : () => setState(() {
+                            _receiptBytes = null;
+                            _receiptFileName = null;
+                          }),
+                  icon: Icon(Icons.close_rounded, size: 18, color: p.error),
+                ),
+              ],
+            ),
+          ] else ...[
+            const SizedBox(height: 4),
+            Text(
+              'Attach your transfer screenshot (JPG/PNG, max 5 MB) for faster Treasurer verification.',
+              style: TextStyle(fontSize: 11.5, color: p.muted),
+            ),
+          ],
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed:
+                (_isSubmitting || _isPickingReceipt) ? null : _pickReceiptScreenshot,
+            icon: _isPickingReceipt
+                ? SizedBox(
+                    width: 15,
+                    height: 15,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: p.primary,
+                    ),
+                  )
+                : const Icon(Icons.upload_file_rounded, size: 18),
+            label: Text(
+              hasReceipt
+                  ? 'Change Receipt Screenshot'
+                  : 'Attach Receipt Screenshot',
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -773,6 +1008,36 @@ class _SubmissionCard extends StatelessWidget {
               fontSize: 12,
               fontFamily: 'monospace',
               color: p.muted,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: (item.hasReceipt ? p.success : p.muted)
+                  .withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  item.hasReceipt
+                      ? Icons.receipt_long_rounded
+                      : Icons.receipt_outlined,
+                  size: 13,
+                  color: item.hasReceipt ? p.success : p.muted,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  item.hasReceipt ? 'Receipt Uploaded' : 'No Receipt Image',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: item.hasReceipt ? p.success : p.muted,
+                  ),
+                ),
+              ],
             ),
           ),
           if (item.treasurerNotes?.isNotEmpty == true) ...[

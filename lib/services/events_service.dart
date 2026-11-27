@@ -1,7 +1,7 @@
 import 'package:cpf_mobile/models/campus_event.dart';
 import 'package:cpf_mobile/services/api_client.dart';
 
-/// REST API v1 campus events and officer QR attendance endpoints.
+/// REST API v1 campus events, A–Z manual checklist, and officer QR attendance endpoints.
 class EventsService {
   const EventsService(this._client);
 
@@ -29,6 +29,42 @@ class EventsService {
         '/events/$eventId/scan',
         data: <String, dynamic>{
           'qr_payload': qrPayload.trim(),
+          'scan_type': scanType,
+        },
+      );
+      return ScanResult.fromJson(_client.expectJsonMap(response.data));
+    } catch (error) {
+      throw _client.toApiException(error);
+    }
+  }
+
+  /// `GET /api/v1/events/{event}/checklist`
+  /// Returns the searchable A–Z same-campus attendance checklist for officers.
+  Future<EventChecklistResponse> fetchEventChecklist(int eventId) async {
+    try {
+      final response =
+          await _client.dio.get<dynamic>('/events/$eventId/checklist');
+      return EventChecklistResponse.fromJson(
+        _client.expectJsonMap(response.data),
+      );
+    } catch (error) {
+      throw _client.toApiException(error);
+    }
+  }
+
+  /// `POST /api/v1/events/{event}/manual-attendance`
+  /// Records manual officer check-in (`"login"`) or check-out (`"logout"`)
+  /// for a same-campus member by [userId].
+  Future<ScanResult> recordManualAttendance({
+    required int eventId,
+    required int userId,
+    required String scanType,
+  }) async {
+    try {
+      final response = await _client.dio.post<dynamic>(
+        '/events/$eventId/manual-attendance',
+        data: <String, dynamic>{
+          'user_id': userId,
           'scan_type': scanType,
         },
       );

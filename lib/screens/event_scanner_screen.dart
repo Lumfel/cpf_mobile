@@ -46,6 +46,9 @@ class _EventScannerScreenState extends State<EventScannerScreen> {
 
   _ScanFeedback? _feedback;
   List<ManualChecklistEntry> _checklist = const <ManualChecklistEntry>[];
+  bool _isLoadingChecklist = false;
+  String? _checklistError;
+  final Set<int> _busyUserIds = <int>{};
 
   @override
   void initState() {
@@ -68,11 +71,55 @@ class _EventScannerScreenState extends State<EventScannerScreen> {
   }
 
   Future<void> _loadChecklist() async {
-    final entries = await widget.storage.readEventChecklist(_event.id);
+    final cached = await widget.storage.readEventChecklist(_event.id);
+    if (mounted && _checklist.isEmpty && cached.isNotEmpty) {
+      setState(() => _checklist = _sortAlphabetically(cached));
+    }
+
     if (!mounted) return;
     setState(() {
-      _checklist = entries;
+      _isLoadingChecklist = true;
+      _checklistError = null;
     });
+
+    try {
+      final serverChecklist =
+          await widget.eventsService.fetchEventChecklist(_event.id);
+      if (!mounted) return;
+      final sorted = _sortAlphabetically(serverChecklist.entries);
+      await widget.storage.writeEventChecklist(_event.id, sorted);
+      if (!mounted) return;
+      setState(() {
+        _checklist = sorted;
+        _event = _event.copyWith(
+          loggedInCount: serverChecklist.loggedInCount ?? _event.loggedInCount,
+          loggedOutCount:
+              serverChecklist.loggedOutCount ?? _event.loggedOutCount,
+        );
+        _isLoadingChecklist = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _checklistError = extractErrorMessage(
+          error,
+          currentBaseUrl: widget.baseUrl,
+        );
+        _isLoadingChecklist = false;
+      });
+    }
+  }
+
+  List<ManualChecklistEntry> _sortAlphabetically(
+    List<ManualChecklistEntry> entries,
+  ) {
+    final copy = List<ManualChecklistEntry>.from(entries);
+    copy.sort(
+      (a, b) => a.memberName
+          .toLowerCase()
+          .compareTo(b.memberName.toLowerCase()),
+    );
+    return copy;
   }
 
   Color _stageColor(CpfPalette p) =>
@@ -217,13 +264,100 @@ class _EventScannerScreenState extends State<EventScannerScreen> {
     }
   }
 
+  Future<void> _submitManualAttendance({
+    required ManualChecklistEntry entry,
+    required String scanType,
+  }) async {
+    final userId = entry.userId;
+    if (userId == null || userId <= 0) {
+      await _submitScan(
+        identifier: entry.identifier,
+        scanType: scanType,
+        clearManualInput: false,
+      );
+      return;
+    }
+
+    if (_isSubmitting || _busyUserIds.contains(userId)) return;
+    setState(() {
+      _isSubmitting = true;
+      _busyUserIds.add(userId);
+    });
+
+    try {
+      final result = await widget.eventsService.recordManualAttendance(
+        eventId: _event.id,
+        userId: userId,
+        scanType: scanType,
+      );
+      await HapticFeedback.mediumImpact();
+
+      final nextLoggedInCount = result.isFreshCheckIn
+          ? _event.loggedInCount + 1
+          : _event.loggedInCount;
+      final nextLoggedOutCount = result.isFreshCheckOut
+          ? _event.loggedOutCount + 1
+          : _event.loggedOutCount;
+
+      final updatedList = _mergeChecklistEntry(
+        entry.identifier,
+        result,
+        userId: userId,
+      );
+      await widget.storage.writeEventChecklist(_event.id, updatedList);
+
+      if (!mounted) return;
+      setState(() {
+        _event = _event.copyWith(
+          loggedInCount: nextLoggedInCount,
+          loggedOutCount: nextLoggedOutCount,
+        );
+        _checklist = updatedList;
+        _feedback = _ScanFeedback(
+          isError: false,
+          isDuplicate: result.isDuplicate,
+          title: '${result.statusLabel}: ${result.memberName}',
+          subtitle: result.courseYearSection?.isNotEmpty == true
+              ? result.courseYearSection!
+              : (entry.courseYearSection ?? entry.identifier),
+        );
+      });
+    } catch (error) {
+      await HapticFeedback.heavyImpact();
+      if (!mounted) return;
+      setState(() {
+        _feedback = _ScanFeedback(
+          isError: true,
+          isDuplicate: false,
+          title: 'Manual Attendance Rejected',
+          subtitle: extractErrorMessage(
+            error,
+            currentBaseUrl: widget.baseUrl,
+          ),
+        );
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busyUserIds.remove(userId);
+          _isSubmitting = false;
+        });
+      }
+    }
+  }
+
   List<ManualChecklistEntry> _mergeChecklistEntry(
     String identifier,
-    ScanResult result,
-  ) {
+    ScanResult result, {
+    int? userId,
+  }) {
     final next = List<ManualChecklistEntry>.from(_checklist);
+    final resolvedUserId = userId ?? result.attendance?.userId;
     final index = next.indexWhere(
       (e) =>
+          (resolvedUserId != null &&
+              resolvedUserId > 0 &&
+              e.userId == resolvedUserId) ||
           e.identifier == identifier ||
           (result.memberName.isNotEmpty && e.memberName == result.memberName),
     );
@@ -231,20 +365,35 @@ class _EventScannerScreenState extends State<EventScannerScreen> {
     final record = result.attendance;
     final existing = index >= 0 ? next[index] : null;
     final entry = ManualChecklistEntry(
+      userId: existing?.userId ?? resolvedUserId,
       identifier: existing?.identifier ?? identifier,
-      memberName: result.memberName,
+      memberName: result.memberName.isNotEmpty
+          ? result.memberName
+          : (existing?.memberName ?? 'Verified Peer'),
       courseYearSection:
           result.courseYearSection ?? existing?.courseYearSection,
-      loggedInAt: record?.loggedInAt ?? existing?.loggedInAt,
-      loggedOutAt: record?.loggedOutAt ?? existing?.loggedOutAt,
+      roleLabel: existing?.roleLabel,
+      loggedInAt: record?.loggedInAt ??
+          existing?.loggedInAt ??
+          ((result.status == 'logged_in' ||
+                  result.status == 'already_logged_in')
+              ? DateTime.now().toIso8601String()
+              : null),
+      loggedOutAt: record?.loggedOutAt ??
+          existing?.loggedOutAt ??
+          ((result.status == 'logged_out' ||
+                  result.status == 'already_logged_out')
+              ? DateTime.now().toIso8601String()
+              : null),
       lastStatus: result.status,
     );
 
     if (index >= 0) {
-      next.removeAt(index);
+      next[index] = entry;
+    } else {
+      next.add(entry);
     }
-    next.insert(0, entry);
-    return next;
+    return _sortAlphabetically(next);
   }
 
   @override
@@ -576,7 +725,8 @@ class _EventScannerScreenState extends State<EventScannerScreen> {
         : _checklist.where((e) {
             return e.memberName.toLowerCase().contains(query) ||
                 e.identifier.toLowerCase().contains(query) ||
-                (e.courseYearSection?.toLowerCase().contains(query) ?? false);
+                (e.courseYearSection?.toLowerCase().contains(query) ?? false) ||
+                (e.roleLabel?.toLowerCase().contains(query) ?? false);
           }).toList();
 
     return ListView(
@@ -656,36 +806,76 @@ class _EventScannerScreenState extends State<EventScannerScreen> {
         const SizedBox(height: 14),
         Row(
           children: [
-            Text(
-              'Event Attendance Checklist',
-              style: TextStyle(
-                fontSize: 14.5,
-                fontWeight: FontWeight.w800,
-                color: p.text,
+            Expanded(
+              child: Text(
+                'Campus A–Z Attendance Checklist',
+                style: TextStyle(
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w800,
+                  color: p.text,
+                ),
               ),
             ),
-            const Spacer(),
             Text(
-              '${_checklist.length} recorded',
+              '${_checklist.length} members',
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
                 color: p.muted,
               ),
             ),
+            IconButton(
+              tooltip: 'Refresh campus checklist',
+              onPressed: _isLoadingChecklist ? null : _loadChecklist,
+              icon: _isLoadingChecklist
+                  ? SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: p.primary,
+                      ),
+                    )
+                  : Icon(Icons.refresh_rounded, size: 19, color: p.primary),
+            ),
           ],
         ),
+        if (_checklistError != null) ...[
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: p.error.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              _checklistError!,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: p.error,
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: 8),
         TextField(
           controller: _searchController,
           onChanged: (_) => setState(() {}),
           decoration: const InputDecoration(
-            hintText: 'Filter checklist by name, course, or ID...',
+            hintText: 'Search A–Z roster by name, course, or ID...',
             prefixIcon: Icon(Icons.search_rounded),
           ),
         ),
         const SizedBox(height: 10),
-        if (visibleEntries.isEmpty)
+        if (_isLoadingChecklist && _checklist.isEmpty)
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: CircularProgressIndicator(color: p.primary),
+            ),
+          )
+        else if (visibleEntries.isEmpty)
           Container(
             padding: const EdgeInsets.all(22),
             decoration: BoxDecoration(
@@ -694,7 +884,9 @@ class _EventScannerScreenState extends State<EventScannerScreen> {
               border: Border.all(color: p.border),
             ),
             child: Text(
-              'No scanned or manually recorded peers yet for this event.',
+              query.isEmpty
+                  ? 'No approved campus members available for this event checklist.'
+                  : 'No campus members match "$query".',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13, color: p.muted),
             ),
@@ -703,16 +895,15 @@ class _EventScannerScreenState extends State<EventScannerScreen> {
           for (final entry in visibleEntries) ...[
             _ChecklistRowCard(
               entry: entry,
-              isSubmitting: _isSubmitting,
-              onCheckIn: () => _submitScan(
-                identifier: entry.identifier,
+              isSubmitting: _isSubmitting ||
+                  (entry.userId != null && _busyUserIds.contains(entry.userId)),
+              onCheckIn: () => _submitManualAttendance(
+                entry: entry,
                 scanType: 'login',
-                clearManualInput: false,
               ),
-              onCheckOut: () => _submitScan(
-                identifier: entry.identifier,
+              onCheckOut: () => _submitManualAttendance(
+                entry: entry,
                 scanType: 'logout',
-                clearManualInput: false,
               ),
             ),
             const SizedBox(height: 8),

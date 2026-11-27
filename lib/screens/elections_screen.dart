@@ -37,6 +37,7 @@ class _ElectionsScreenState extends State<ElectionsScreen> {
   int? _armedCandidateId;
   bool _isCastingVote = false;
   bool _isNominating = false;
+  final Set<int> _respondingCandidateIds = <int>{};
 
   bool _chatExpanded = false;
   bool _isSendingChat = false;
@@ -425,6 +426,52 @@ class _ElectionsScreenState extends State<ElectionsScreen> {
     }
   }
 
+  Future<void> _respondToNomination({
+    required ActiveElectionSession session,
+    required ElectionNominee nominee,
+    required bool accept,
+  }) async {
+    if (_respondingCandidateIds.contains(nominee.id)) return;
+    setState(() => _respondingCandidateIds.add(nominee.id));
+
+    try {
+      await HapticFeedback.mediumImpact();
+      await widget.electionsService.respondToNomination(
+        electionId: session.id,
+        candidateId: nominee.id,
+        accept: accept,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            accept
+                ? 'Nomination accepted for ${session.currentPositionLabel ?? 'this seat'}!'
+                : 'Nomination declined.',
+          ),
+        ),
+      );
+      await _loadElection();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            extractErrorMessage(
+              error,
+              currentBaseUrl: widget.authController.apiConfig.baseUrl,
+            ),
+          ),
+        ),
+      );
+      await _loadElection();
+    } finally {
+      if (mounted) {
+        setState(() => _respondingCandidateIds.remove(nominee.id));
+      }
+    }
+  }
+
   Future<void> _promptSelfNomination(
     ActiveElectionOverview overview,
     ActiveElectionSession session,
@@ -597,6 +644,14 @@ class _ElectionsScreenState extends State<ElectionsScreen> {
     final isCurrentUserAlreadyElected = overview.isUserAlreadyElected(userId);
     final canNominateNow =
         active != null && _canNominateForSession(overview, active);
+    final pendingNominationsForMe = (active != null &&
+            active.isActivelyOpen &&
+            userId != null &&
+            userId > 0)
+        ? active.candidatesForCurrentSeat
+            .where((n) => n.isPending && n.userId == userId)
+            .toList()
+        : const <ElectionNominee>[];
 
     return Column(
       children: [
@@ -633,6 +688,10 @@ class _ElectionsScreenState extends State<ElectionsScreen> {
                   FadeSlideIn(child: _buildMeetingHeader(p, overview, active)),
                   const SizedBox(height: 10),
                   _buildAdviserPresidingBar(p, active),
+                  for (final pending in pendingNominationsForMe) ...[
+                    const SizedBox(height: 10),
+                    _buildPendingNominationResponseCard(p, active, pending),
+                  ],
                   if (active.isNominationPhase &&
                       isCurrentUserAlreadyElected &&
                       !_isClubAdviser) ...[
@@ -862,6 +921,101 @@ class _ElectionsScreenState extends State<ElectionsScreen> {
                 ),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPendingNominationResponseCard(
+    CpfPalette p,
+    ActiveElectionSession active,
+    ElectionNominee nominee,
+  ) {
+    final isBusy = _respondingCandidateIds.contains(nominee.id);
+    final onAction = p.themeId.isDark ? p.bg : Colors.white;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: p.accent.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: p.accent.withValues(alpha: 0.55), width: 1.4),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.how_to_reg_rounded, size: 20, color: p.accent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'You Were Nominated for ${active.currentPositionLabel ?? nominee.position}',
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w800,
+                    color: p.text,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Accept to appear on the official floor ballot, or decline to step aside for this seat.',
+            style: TextStyle(fontSize: 12, color: p.muted, height: 1.35),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: isBusy
+                      ? null
+                      : () => _respondToNomination(
+                            session: active,
+                            nominee: nominee,
+                            accept: false,
+                          ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: p.error,
+                    side: BorderSide(color: p.error.withValues(alpha: 0.6)),
+                    minimumSize: const Size(0, 38),
+                  ),
+                  icon: const Icon(Icons.close_rounded, size: 17),
+                  label: const Text('Decline'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: isBusy
+                      ? null
+                      : () => _respondToNomination(
+                            session: active,
+                            nominee: nominee,
+                            accept: true,
+                          ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: p.success,
+                    foregroundColor: onAction,
+                    minimumSize: const Size(0, 38),
+                  ),
+                  icon: isBusy
+                      ? SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: onAction,
+                          ),
+                        )
+                      : const Icon(Icons.check_rounded, size: 17),
+                  label: const Text('Accept'),
+                ),
+              ),
+            ],
           ),
         ],
       ),

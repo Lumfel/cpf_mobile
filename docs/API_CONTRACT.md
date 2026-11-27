@@ -86,9 +86,11 @@ Verifies that the Laravel API and active database connection (`DB::connection()-
 {
   "email": "sofia.mercado@chmsu.edu.ph",
   "password": "PersonalSecret2026!",
-  "device_name": "Pixel 8 Pro (cpf_mobile)"
+  "device_name": "Pixel 8 Pro (cpf_mobile)",
+  "code": "123456"
 }
 ```
+> **Two-Factor Challenge (`422 Unprocessable Content`):** If the account has 2FA enabled and neither `code` (6-digit TOTP) nor `recovery_code` was supplied, the API responds with HTTP `422` and `"two_factor_required": true`. Mobile prompts for the authenticator `code` or `recovery_code` and retries the request with that field included.
 
 #### Response `200 OK`
 ```json
@@ -164,12 +166,34 @@ Accepts either dashed (`ABCD-EFGH-JKLM`) or raw (`ABCDEFGHJKLM`) 12-character pa
 {
   "email": "katrina.reyes@chmsu.edu.ph",
   "passkey_code": "ABCD-EFGH-JKLM",
-  "device_name": "Samsung A55 (cpf_mobile)"
+  "device_name": "Samsung A55 (cpf_mobile)",
+  "code": "123456"
+}
+```
+> Supports the same `422` `"two_factor_required": true` challenge flow (`code` or `recovery_code`) when 2FA is active on the account.
+
+#### Response `200 OK`
+Returns the exact same payload structure as `POST /api/v1/auth/login`.
+
+---
+
+### 2b. In-App Forced Password Change
+
+`POST /api/v1/auth/password/force-change`  
+**Auth:** `Bearer <token>` (`auth:sanctum`)
+
+Allows accounts flagged with `must_change_password: true` to replace their temporary or passkey-issued password directly inside `cpf_mobile`.
+
+#### Request Body
+```json
+{
+  "password": "NewPersonalPassword2026!",
+  "password_confirmation": "NewPersonalPassword2026!"
 }
 ```
 
 #### Response `200 OK`
-Returns the exact same payload structure as `POST /api/v1/auth/login`.
+Returns the updated authenticated profile payload (`must_change_password: false` and unlocked `qr_unlocked` / `qr_payload` for verified non-counselor members).
 
 ---
 
@@ -269,6 +293,17 @@ Regular verified members receive `approved` and `cancelled` events on their camp
 - **Duplicate Log-Out (`200 OK`):** `"status": "already_logged_out"`
 - **Log-Out before Log-In / Event Inactive / Invalid Signature / Wrong Campus (`422 Unprocessable Content`)**
 - **Regular Member / Alumni / Other Campus Officer (`403 Forbidden`)**
+
+---
+
+### 6b. Event A–Z Manual Attendance Checklist & Manual Check-In/Out
+
+`GET /api/v1/events/{event}/checklist`  
+`POST /api/v1/events/{event}/manual-attendance`  
+**Auth:** `Bearer <token>` (`auth:sanctum`) — **Requires verified same-campus Officer or Club Adviser**
+
+- `GET` returns the alphabetical (A–Z) same-campus roster with per-member `user_id`, `full_name_last_first_mi`, `course_year_section`, `logged_in_at`, and `logged_out_at`.
+- `POST` records manual check-in (`"scan_type": "login"`) or check-out (`"scan_type": "logout"`) for `{ "user_id": 19, "scan_type": "login" }`.
 
 ---
 
@@ -683,6 +718,13 @@ Returns `"active_election": null` when no election session is currently active o
   }
 }
 ```
+
+### 16b. Accept or Decline Pending Nomination
+
+`PATCH /api/v1/elections/{election}/candidates/{candidate}/respond`  
+**Auth:** `Bearer <token>` (`auth:sanctum`) — **Requires the nominated member while `status === "open"` and `nomination_status === "pending"`**
+
+Accepts (`"action": "accept"` / `"status": "accepted"`) or declines (`"action": "decline"` / `"status": "declined"`) a pending floor nomination.
 
 ---
 

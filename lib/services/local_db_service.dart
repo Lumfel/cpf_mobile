@@ -9,12 +9,22 @@ import 'package:cpf_mobile/models/auth_profile.dart';
 /// profile, role, campus, and HMAC-signed `qr_payload` so the Peer Dashboard
 /// QR Pass opens reliably even without internet connectivity.
 ///
+/// Enforces a 7-day staleness limit ([maxOfflineCacheAge]) on cached offline QR
+/// data so expired or demoted credentials are not displayed indefinitely.
+///
 /// The Sanctum Bearer token is NEVER stored here — it stays encrypted inside
 /// `flutter_secure_storage`.
 class LocalDbService {
-  LocalDbService({this.inMemoryOnly = false});
+  LocalDbService({
+    this.inMemoryOnly = false,
+    DateTime Function()? clock,
+  }) : _clock = clock ?? DateTime.now;
+
+  /// Maximum age allowed for cached offline Peer QR/profile data.
+  static const Duration maxOfflineCacheAge = Duration(days: 7);
 
   final bool inMemoryOnly;
+  final DateTime Function() _clock;
 
   static const String _dbFileName = 'cpf_mobile_offline.db';
   static const int _dbVersion = 1;
@@ -22,6 +32,17 @@ class LocalDbService {
 
   Database? _db;
   AuthProfile? _memoryFallback;
+  DateTime? _memoryFallbackUpdatedAt;
+  bool _lastReadWasStale = false;
+
+  /// True when the most recent [readCachedProfile] call discarded a cached
+  /// offline QR profile because it exceeded [maxOfflineCacheAge] (7 days).
+  bool get lastReadWasStale => _lastReadWasStale;
+
+  bool _isStale(DateTime? updatedAt) {
+    if (updatedAt == null) return true;
+    return _clock().difference(updatedAt) > maxOfflineCacheAge;
+  }
 
   Future<Database?> _openDb() async {
     if (kIsWeb || inMemoryOnly) {
@@ -65,8 +86,15 @@ class LocalDbService {
   }
 
   /// Saves or overwrites the single active user profile in SQLite.
-  Future<void> cacheProfile(AuthProfile profile) async {
+  Future<void> cacheProfile(
+    AuthProfile profile, {
+    DateTime? cachedAt,
+  }) async {
+    final timestamp = cachedAt ?? _clock();
     _memoryFallback = profile;
+    _memoryFallbackUpdatedAt = timestamp;
+    _lastReadWasStale = false;
+
     final db = await _openDb();
     if (db == null) return;
 
@@ -87,7 +115,7 @@ class LocalDbService {
           'qr_payload': profile.qrPayload,
           'qr_unlocked': profile.qrUnlocked ? 1 : 0,
           'profile_json': jsonEncode(profile.toJson()),
-          'updated_at': DateTime.now().toIso8601String(),
+          'updated_at': timestamp.toIso8601String(),
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
@@ -96,10 +124,18 @@ class LocalDbService {
     }
   }
 
-  /// Reads the cached offline [AuthProfile], or returns `null` if none exists.
+  /// Reads the cached offline [AuthProfile], returning `null` (and wiping the
+  /// stale cache) if no entry exists or if it is older than 7 days.
   Future<AuthProfile?> readCachedProfile() async {
+    _lastReadWasStale = false;
     final db = await _openDb();
     if (db == null) {
+      if (_memoryFallback == null) return null;
+      if (_isStale(_memoryFallbackUpdatedAt)) {
+        _lastReadWasStale = true;
+        await clearCachedProfile();
+        return null;
+      }
       return _memoryFallback;
     }
 
@@ -111,27 +147,50 @@ class LocalDbService {
         limit: 1,
       );
       if (rows.isEmpty) {
+        if (_memoryFallback != null && _isStale(_memoryFallbackUpdatedAt)) {
+          _lastReadWasStale = true;
+          await clearCachedProfile();
+          return null;
+        }
         return _memoryFallback;
       }
+
+      final updatedAtRaw = rows.first['updated_at'] as String?;
+      final updatedAt =
+          updatedAtRaw != null ? DateTime.tryParse(updatedAtRaw) : null;
+      if (_isStale(updatedAt)) {
+        _lastReadWasStale = true;
+        await clearCachedProfile();
+        return null;
+      }
+
       final rawJson = rows.first['profile_json'] as String?;
       if (rawJson == null || rawJson.isEmpty) {
-        return _memoryFallback;
+        return null;
       }
       final decoded = jsonDecode(rawJson);
       if (decoded is Map<String, dynamic>) {
         final parsed = AuthProfile.fromJson(decoded);
         _memoryFallback = parsed;
+        _memoryFallbackUpdatedAt = updatedAt;
         return parsed;
       }
-      return _memoryFallback;
+      return null;
     } catch (_) {
+      if (_memoryFallback != null && _isStale(_memoryFallbackUpdatedAt)) {
+        _lastReadWasStale = true;
+        await clearCachedProfile();
+        return null;
+      }
       return _memoryFallback;
     }
   }
 
-  /// Wipes the cached profile on sign-out or HTTP 401 session revocation.
+  /// Wipes the cached profile on sign-out, HTTP 401 session revocation, or
+  /// 7-day offline cache expiration.
   Future<void> clearCachedProfile() async {
     _memoryFallback = null;
+    _memoryFallbackUpdatedAt = null;
     final db = await _openDb();
     if (db == null) return;
 
